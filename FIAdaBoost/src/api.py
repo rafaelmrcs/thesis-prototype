@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import __main__
+import os
 from pathlib import Path
 
 import joblib
@@ -102,15 +103,23 @@ class TrainingAnalyticsResponse(BaseModel):
     residualSummary: dict[str, float]
 
 
+def _parse_cors_origins() -> list[str]:
+    defaults = [
+        "http://localhost:5173",
+        "http://127.0.0.1:5173",
+        "http://0.0.0.0:5173",
+    ]
+
+    configured = os.getenv("CORS_ORIGINS", "")
+    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    return origins or defaults
+
+
 app = FastAPI(title="FI-AdaBoost API", version="1.0.0")
 
 app.add_middleware(
     CORSMiddleware,
-    allow_origins=[
-        "http://localhost:5173",
-        "http://127.0.0.1:5173",
-        "http://0.0.0.0:5173",
-    ],
+    allow_origins=_parse_cors_origins(),
     allow_origin_regex=r"http://([a-zA-Z0-9\-\.]+):5173",
     allow_credentials=True,
     allow_methods=["*"],
