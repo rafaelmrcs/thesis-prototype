@@ -1,5 +1,5 @@
-# Ignore processed data
-/data/processed/
+# Track processed data for deployment
+!/data/processed/
 # Keep trained model files (pkl, csv) — needed for deployment
 !/models/*.pkl
 !/models/*.csv
