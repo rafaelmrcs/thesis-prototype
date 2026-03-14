@@ -1,0 +1,2 @@
+﻿origin	https://github.com/juliaverzosa/FIAdaBoost.git (fetch)
+origin	https://github.com/juliaverzosa/FIAdaBoost.git (push)

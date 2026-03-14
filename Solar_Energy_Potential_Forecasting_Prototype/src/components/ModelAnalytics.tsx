@@ -1,0 +1,196 @@
+import { useEffect, useState } from 'react';
+import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/card';
+import { Button } from './ui/button';
+import { RefreshCw } from 'lucide-react';
+
+interface ModelAnalyticsProps {
+  lat?: number;
+  lng?: number;
+}
+
+interface PredictSnapshot {
+  solarPotential: number;
+  rooftopArea: number;
+  solarExposureIndex: number;
+  orientation: string;
+  azimuth: number;
+  sunshineHours: number;
+  cloudCover: number;
+  temperature: number;
+  humidity: number;
+  clearSkyRatio: number;
+}
+
+interface ComparisonData {
+  baseline: PredictSnapshot;
+  fiAdaBoost: PredictSnapshot;
+  improvement: {
+    solarPotentialDiff: number;
+    solarPotentialImprovementPct: number;
+    confidenceLevel: number;
+  };
+}
+
+function getBackendCandidates(): string[] {
+  const envUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
+  const host = window.location.hostname || 'localhost';
+  return [
+    envUrl,
+    `http://${host}:8501`,
+    'http://localhost:8501',
+    'http://127.0.0.1:8501',
+  ].filter((url): url is string => Boolean(url));
+}
+
+async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
+  let lastError = 'Backend request failed';
+  for (const backendUrl of getBackendCandidates()) {
+    try {
+      const response = await fetch(`${backendUrl}${path}`, init);
+      if (response.ok) return (await response.json()) as T;
+      lastError = `${path} failed with status ${response.status}`;
+    } catch (error) {
+      lastError = error instanceof Error ? error.message : 'Network error';
+    }
+  }
+  throw new Error(lastError);
+}
+
+export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsProps) {
+  const [liveComparison, setLiveComparison] = useState<ComparisonData | null>(null);
+  const [isLoading, setIsLoading] = useState(false);
+  const [error, setError] = useState<string | null>(null);
+
+  const fetchLiveComparison = async () => {
+    setIsLoading(true);
+    setError(null);
+    try {
+      const data = await fetchBackendJson<ComparisonData>('/compare', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ lat, lng }),
+      });
+      setLiveComparison(data);
+    } catch (err) {
+      setError(err instanceof Error ? err.message : 'Failed to compare models');
+    } finally {
+      setIsLoading(false);
+    }
+  };
+
+  useEffect(() => {
+    void fetchLiveComparison();
+  }, [lat, lng]);
+
+  return (
+    <div className="space-y-6">
+      {/* Header banner */}
+      <div className="rounded-xl border border-cyan-200 bg-cyan-50 px-4 py-3 text-sm text-cyan-800">
+        <span className="font-semibold">Location Analysis</span> — predictions and rooftop context for the
+        currently selected pin. Change the pin on the map to refresh.
+      </div>
+
+      {error && (
+        <Card className="border-2 border-red-200 bg-red-50">
+          <CardContent className="pt-6 text-sm text-red-700">{error}</CardContent>
+        </Card>
+      )}
+
+      {/* Live prediction comparison */}
+      <Card className="border-2 border-cyan-200 bg-gradient-to-br from-cyan-50 via-blue-50 to-sky-50 shadow-xl">
+        <CardHeader>
+          <div className="flex items-center justify-between gap-4">
+            <div>
+              <CardTitle className="text-xl">Live Model Prediction</CardTitle>
+              <CardDescription>
+                Both models predicting for {lat.toFixed(4)}°N, {lng.toFixed(4)}°E
+              </CardDescription>
+            </div>
+            <Button variant="outline" size="sm" onClick={fetchLiveComparison} disabled={isLoading} className="gap-2">
+              <RefreshCw className={`h-4 w-4 ${isLoading ? 'animate-spin' : ''}`} />
+              Refresh
+            </Button>
+          </div>
+        </CardHeader>
+        <CardContent className="space-y-4">
+          {liveComparison ? (
+            <>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
+                <div className="rounded-xl border-2 border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Baseline AdaBoost</p>
+                  <p className="mt-1 text-3xl font-semibold text-slate-700">
+                    {liveComparison.baseline.solarPotential.toFixed(3)}
+                  </p>
+                  <p className="text-xs text-slate-400">kWh/m²/day (predicted GHI)</p>
+                </div>
+                <div className="rounded-xl border-2 border-orange-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost</p>
+                  <p className="mt-1 text-3xl font-semibold text-orange-600">
+                    {liveComparison.fiAdaBoost.solarPotential.toFixed(3)}
+                  </p>
+                  <p className="text-xs text-slate-400">kWh/m²/day (predicted GHI)</p>
+                </div>
+                <div className="rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 p-4 text-white shadow-lg">
+                  <p className="text-xs opacity-80 uppercase tracking-wide">Difference</p>
+                  <p className="mt-1 text-3xl font-semibold">
+                    {liveComparison.improvement.solarPotentialDiff >= 0 ? '+' : ''}
+                    {liveComparison.improvement.solarPotentialDiff.toFixed(3)}
+                  </p>
+                  <p className="text-xs opacity-70">
+                    ({liveComparison.improvement.solarPotentialImprovementPct >= 0 ? '+' : ''}
+                    {liveComparison.improvement.solarPotentialImprovementPct.toFixed(2)}%)
+                  </p>
+                </div>
+              </div>
+
+              {/* <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
+                <p className="text-xs text-slate-500 uppercase tracking-wide">Prediction Confidence</p>
+                <p className="mt-1 text-3xl font-semibold text-sky-700">
+                  {liveComparison.improvement.confidenceLevel.toFixed(1)}%
+                </p>
+                <p className="text-xs text-slate-400">Based on proximity to training data and model agreement</p>
+              </div> */}
+            </>
+          ) : (
+            <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-sm text-slate-500">
+              {isLoading ? 'Fetching predictions from backend…' : 'No data — check the backend connection.'}
+            </div>
+          )}
+        </CardContent>
+      </Card>
+
+      {/* Rooftop & weather context */}
+      {liveComparison && (
+        <Card className="border-2 border-slate-200 bg-white shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-xl">Rooftop &amp; Weather Context</CardTitle>
+            <CardDescription>
+              Engineered feature values for {lat.toFixed(4)}°N, {lng.toFixed(4)}°E
+            </CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <SnapshotTile label="Rooftop Area" value={`${liveComparison.fiAdaBoost.rooftopArea.toFixed(1)} m²`} />
+              <SnapshotTile label="Solar Exposure Index" value={liveComparison.fiAdaBoost.solarExposureIndex.toFixed(3)} />
+              <SnapshotTile label="Sunshine Hours" value={`${liveComparison.fiAdaBoost.sunshineHours.toFixed(1)} hrs/day`} />
+              <SnapshotTile label="Cloud Cover" value={`${liveComparison.fiAdaBoost.cloudCover.toFixed(1)}%`} />
+              <SnapshotTile label="Temperature" value={`${liveComparison.fiAdaBoost.temperature.toFixed(1)}°C`} />
+              <SnapshotTile label="Humidity" value={`${liveComparison.fiAdaBoost.humidity.toFixed(1)}%`} />
+              <SnapshotTile label="Orientation" value={liveComparison.fiAdaBoost.orientation} />
+              <SnapshotTile label="Azimuth" value={`${liveComparison.fiAdaBoost.azimuth.toFixed(1)}°`} />
+            </div>
+          </CardContent>
+        </Card>
+      )}
+    </div>
+  );
+}
+
+function SnapshotTile({ label, value }: { label: string; value: string }) {
+  return (
+    <div className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+      <p className="text-xs text-slate-500 uppercase tracking-wide">{label}</p>
+      <p className="mt-1 text-xl font-semibold text-slate-900">{value}</p>
+    </div>
+  );
+}

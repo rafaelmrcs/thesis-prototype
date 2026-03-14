@@ -1,0 +1,24 @@
+services:
+  backend:
+    build:
+      context: ./FIAdaBoost
+      dockerfile: Dockerfile
+    container_name: fiadaboost-backend
+    working_dir: /app
+    volumes:
+      - ./FIAdaBoost:/app
+    command: sh -c "$${BACKEND_CMD:-uvicorn src.api:app --host 0.0.0.0 --port 8501}"
+    ports:
+      - "8501:8501"
+
+  frontend:
+    build:
+      context: ./Solar_Energy_Potential_Forecasting_Prototype
+      dockerfile: Dockerfile
+      args:
+        - VITE_BACKEND_URL=http://localhost:8501
+    container_name: solar-energy-frontend
+    ports:
+      - "5173:80"
+    depends_on:
+      - backend

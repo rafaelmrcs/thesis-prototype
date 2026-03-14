@@ -1,0 +1,11 @@
+# Ignore processed data
+/data/processed/
+# Keep trained model files (pkl, csv) — needed for deployment
+!/models/*.pkl
+!/models/*.csv
+# Still ignore everything else in models if needed
+# /models/
+# Ignore any virtual environments
+/venv/
+/__pycache__/
+*.pyc
