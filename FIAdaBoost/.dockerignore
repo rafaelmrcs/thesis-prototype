@@ -7,5 +7,4 @@ __pycache__/
 venv/
 *.ipynb
 cache/
-models/
 results/

@@ -147,7 +147,7 @@ class ModelContext:
 
         try:
             return joblib.load(model_path)
-        except (AttributeError, ModuleNotFoundError, ImportError, ValueError):
+        except (FileNotFoundError, AttributeError, ModuleNotFoundError, ImportError, ValueError):
             return None
 
     def _load_cv_metrics(self) -> None:
@@ -303,8 +303,23 @@ class ModelContext:
     def _compute_training_analytics(self) -> None:
         self.training_analytics = None
 
-        self.training_fi_model = self._load_model_file(FI_MODEL_FILE)
-        self.training_baseline_model = self._load_model_file(BASELINE_MODEL_FILE)
+        fi_candidates = [FI_MODEL_FILE, FI_FALLBACK_MODEL_FILE]
+        baseline_candidates = [BASELINE_MODEL_FILE, BASELINE_FALLBACK_MODEL_FILE]
+
+        self.training_fi_model = None
+        for model_path in fi_candidates:
+            if model_path.exists():
+                self.training_fi_model = self._load_model_file(model_path)
+                if self.training_fi_model is not None:
+                    break
+
+        self.training_baseline_model = None
+        for model_path in baseline_candidates:
+            if model_path.exists():
+                self.training_baseline_model = self._load_model_file(model_path)
+                if self.training_baseline_model is not None:
+                    break
+
         if self.training_fi_model is None or self.training_baseline_model is None:
             return
 
