@@ -111,7 +111,19 @@ def _parse_cors_origins() -> list[str]:
     ]
 
     configured = os.getenv("CORS_ORIGINS", "")
-    origins = [origin.strip() for origin in configured.split(",") if origin.strip()]
+    raw_origins = [origin.strip().rstrip("/") for origin in configured.split(",") if origin.strip()]
+    origins: list[str] = []
+
+    for origin in raw_origins:
+        if origin.startswith(("http://", "https://")):
+            origins.append(origin)
+            continue
+
+        origins.append(f"https://{origin}")
+
+        if origin.startswith(("localhost", "127.0.0.1", "0.0.0.0")):
+            origins.append(f"http://{origin}")
+
     return origins or defaults
 
 

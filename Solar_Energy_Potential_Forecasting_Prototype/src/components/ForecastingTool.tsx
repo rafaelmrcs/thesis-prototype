@@ -9,6 +9,7 @@ import { Badge } from './ui/badge';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
 import type { LeafletMouseEvent } from "leaflet";
+import { fetchBackendJson } from '../lib/backend';
 
 const defaultIcon = L.icon({
   iconRetinaUrl: "https://unpkg.com/leaflet@1.9.4/dist/images/marker-icon-2x.png",
@@ -171,50 +172,20 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     setIsLoading(true);
 
     try {
-      const envUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
-      const host = window.location.hostname || 'localhost';
-      const backendCandidates = [
-        envUrl,
-        `http://${host}:8501`,
-        'http://localhost:8501',
-        'http://127.0.0.1:8501',
-      ].filter((url): url is string => Boolean(url));
-
-      let response: Response | null = null;
-      let lastError: string | null = null;
-
-      for (const backendUrl of backendCandidates) {
-        try {
-          response = await fetch(`${backendUrl}/predict`, {
-            method: 'POST',
-            headers: {
-              'Content-Type': 'application/json',
-            },
-            body: JSON.stringify({ lat, lng }),
-          });
-
-          if (response.ok) {
-            break;
-          }
-
-          lastError = `Prediction request failed with status ${response.status}`;
-        } catch (networkError) {
-          lastError = networkError instanceof Error ? networkError.message : 'Network error';
-        }
-      }
-
-      if (!response || !response.ok) {
-        throw new Error(lastError ?? 'Unable to reach prediction service.');
-      }
-
-      const result: PredictionResult = await response.json();
+      const result = await fetchBackendJson<PredictionResult>('/predict', {
+        method: 'POST',
+        headers: {
+          'Content-Type': 'application/json',
+        },
+        body: JSON.stringify({ lat, lng }),
+      });
       console.log('✅ Prediction result:', result);
       setPrediction(result);
     } catch (error) {
       console.error('❌ Prediction error:', error);
       const message = error instanceof Error ? error.message : 'Unable to reach prediction service.';
-      if (/Failed to fetch|NetworkError/i.test(message)) {
-        setApiError('Failed to fetch from backend. Make sure Docker backend is running on port 8501 and refresh the page.');
+      if (/Failed to fetch|NetworkError|Backend URL is not configured/i.test(message)) {
+        setApiError('Failed to reach backend. Set VITE_BACKEND_URL to your Railway backend URL, then redeploy frontend.');
       } else {
         setApiError(message);
       }

@@ -17,6 +17,7 @@ import {
   YAxis,
 } from 'recharts';
 import { RefreshCw, TrendingDown, TrendingUp } from 'lucide-react';
+import { fetchBackendJson } from '../lib/backend';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -77,33 +78,6 @@ interface CVMetricsData {
     baseline: MetricsSummary;
     fiAdaBoost: MetricsSummary;
   };
-}
-
-// ─── Backend helper ───────────────────────────────────────────────────────────
-
-function getBackendCandidates(): string[] {
-  const envUrl = import.meta.env.VITE_BACKEND_URL as string | undefined;
-  const host = window.location.hostname || 'localhost';
-  return [
-    envUrl,
-    `http://${host}:8501`,
-    'http://localhost:8501',
-    'http://127.0.0.1:8501',
-  ].filter((url): url is string => Boolean(url));
-}
-
-async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
-  let lastError = 'Backend request failed';
-  for (const backendUrl of getBackendCandidates()) {
-    try {
-      const response = await fetch(`${backendUrl}${path}`, init);
-      if (response.ok) return (await response.json()) as T;
-      lastError = `${path} failed with status ${response.status}`;
-    } catch (error) {
-      lastError = error instanceof Error ? error.message : 'Network error';
-    }
-  }
-  throw new Error(lastError);
 }
 
 // ─── Main component ───────────────────────────────────────────────────────────
