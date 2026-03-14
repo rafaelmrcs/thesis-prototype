@@ -323,7 +323,11 @@ class ModelContext:
         if self.training_fi_model is None or self.training_baseline_model is None:
             return
 
-        training_df = self._load_training_dataset()
+        try:
+            training_df = self._load_training_dataset()
+        except (FileNotFoundError, ValueError) as exc:
+            print(f"Warning: Skipping training analytics: {exc}")
+            return
         expected_features = list(getattr(self.training_baseline_model, "feature_names_in_", []))
         X, y, dates = self._build_training_feature_set(training_df, expected_features or None)
 
