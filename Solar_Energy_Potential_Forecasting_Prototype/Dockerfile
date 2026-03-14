@@ -2,10 +2,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY Solar_Energy_Potential_Forecasting_Prototype/package*.json ./
 RUN npm install
 
-COPY . .
+COPY Solar_Energy_Potential_Forecasting_Prototype/ .
 
 ARG VITE_BACKEND_URL
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
