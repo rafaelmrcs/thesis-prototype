@@ -10,28 +10,29 @@ import pandas as pd
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
-from sklearn.ensemble import AdaBoostRegressor
+from scipy.spatial import cKDTree
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
-from sklearn.tree import DecisionTreeRegressor
+from sklearn.model_selection import train_test_split
 
-from src.model_training import FIAdaBoostRegressor
+from src.model_training2 import (
+    BASELINE_FEATURES,
+    FI_FEATURES,
+    TARGET_J,
+    BaselineAdaBoost,
+    FIAdaBoostRegressor,
+)
 
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = ROOT_DIR / "models"
-PROCESSED_DATA_FILE = ROOT_DIR / "data" / "processed" / "integrated_dataset.csv"
-DATA_CANDIDATES = [
-    ROOT_DIR / "data" / "raw" / "baseline_spatial_dataset_philippines_2024.csv",
-    ROOT_DIR / "data" / "raw" / "baseline_spatial_dataset_davao_city_2024.csv",
-    ROOT_DIR / "data" / "raw" / "baseline_spatial_dataset_davao_city_2024_partial.csv",
-]
+INTEGRATED_DATA_FILE = ROOT_DIR / "data" / "processed" / "integrated_dataset.csv"
+CV_METRICS_FILE = MODEL_DIR / "cv_fold_metrics.csv"
 FI_MODEL_FILE = MODEL_DIR / "fi_adaboost.pkl"
 BASELINE_MODEL_FILE = MODEL_DIR / "baseline_adaboost.pkl"
-FI_FALLBACK_MODEL_FILE = MODEL_DIR / "fi_adaboost_spatial_api_v3.pkl"
-BASELINE_FALLBACK_MODEL_FILE = MODEL_DIR / "baseline_adaboost_spatial_api_v3.pkl"
-CV_METRICS_FILE = MODEL_DIR / "cv_fold_metrics.csv"
-TRAINING_TARGET = "solar_energy_potential"
-TRAINING_LEAKAGE_COLS = ["sunshine_hours", "clear_sky_ratio", "sunshine_flag", "year_month"]
+
+# Must match model_training2.py exactly
+KWH_TO_J = 3_600_000
+RANDOM_SEED = 42
 
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 
@@ -142,144 +143,183 @@ app.add_middleware(
 class ModelContext:
     def __init__(self) -> None:
         self.fi_model: FIAdaBoostRegressor | None = None
-        self.baseline_model: AdaBoostRegressor | None = None
+        self.baseline_model: BaselineAdaBoost | None = None
         self.df: pd.DataFrame | None = None
+        self._kd_tree: cKDTree | None = None
         self.performance_metrics: dict[str, dict[str, float]] = {}
         self.feature_importance_ranking: list[dict[str, str | float | int]] = []
         self.cv_fold_metrics: list[CVFoldMetrics] = []
         self.average_cv_metrics: dict[str, dict[str, float]] = {}
-        self.training_fi_model: FIAdaBoostRegressor | None = None
-        self.training_baseline_model: AdaBoostRegressor | None = None
         self.training_analytics: TrainingAnalyticsResponse | None = None
 
+    # ── Dataset ───────────────────────────────────────────────────────────
+
+    def _load_dataset(self) -> pd.DataFrame:
+        if not INTEGRATED_DATA_FILE.exists():
+            raise FileNotFoundError(
+                f"Missing integrated dataset: {INTEGRATED_DATA_FILE}\n"
+                "Run the full data pipeline first: data_acquisition → data_processing → "
+                "feature_engineering → data_integration"
+            )
+
+        df = pd.read_csv(INTEGRATED_DATA_FILE)
+
+        required = [TARGET_J, "rooftop_area_sq_m"] + FI_FEATURES
+        missing = [c for c in required if c not in df.columns]
+        if missing:
+            raise ValueError(f"integrated_dataset.csv is missing columns: {missing}")
+
+        df = df.dropna(subset=required).reset_index(drop=True)
+        return df
+
+    def _build_kd_tree(self) -> None:
+        assert self.df is not None
+        self._kd_tree = cKDTree(self.df[["lat", "lon"]].values)
+
+    def _get_nearest_features(self, lat: float, lng: float) -> dict[str, float]:
+        """Return OSM-derived features from the nearest training point."""
+        assert self._kd_tree is not None and self.df is not None
+        _, idx = self._kd_tree.query([lat, lng])
+        row = self.df.iloc[idx]
+        return {
+            "orientation_score": float(row["orientation_score"]),
+            "shading_factor": float(row["shading_factor"]),
+            "tilt_factor": float(row["tilt_factor"]),
+            "SEI_norm": float(row["SEI_norm"]),
+            "rooftop_area_sq_m": float(row["rooftop_area_sq_m"]),
+        }
+
+    # ── Training targets (replicate model_training2.py logic) ─────────────
+
+    def _target_j(self, df: pd.DataFrame) -> np.ndarray:
+        return df[TARGET_J].values.astype(float)
+
+    # ── Model loading / training ──────────────────────────────────────────
+
     def _load_model_file(self, model_path: Path) -> object | None:
-        # Support legacy pickles trained from scripts where class path became __main__.FIAdaBoostRegressor.
         if not hasattr(__main__, "FIAdaBoostRegressor"):
             setattr(__main__, "FIAdaBoostRegressor", FIAdaBoostRegressor)
-
+        if not hasattr(__main__, "BaselineAdaBoost"):
+            setattr(__main__, "BaselineAdaBoost", BaselineAdaBoost)
         try:
             return joblib.load(model_path)
         except (FileNotFoundError, AttributeError, ModuleNotFoundError, ImportError, ValueError):
             return None
 
-    def _load_cv_metrics(self) -> None:
-        """Load cross-validation metrics from CSV file."""
-        if not CV_METRICS_FILE.exists():
-            return
-        
-        try:
-            df = pd.read_csv(CV_METRICS_FILE)
-            self.cv_fold_metrics = []
-            
-            for _, row in df.iterrows():
-                metrics = CVFoldMetrics(
-                    fold=int(row["fold"]),
-                    baseline_rmse=float(row["baseline_RMSE"]),
-                    baseline_mae=float(row["baseline_MAE"]),
-                    baseline_r2=float(row["baseline_R2"]),
-                    fi_rmse=float(row["fi_RMSE"]),
-                    fi_mae=float(row["fi_MAE"]),
-                    fi_r2=float(row["fi_R2"]),
-                )
-                self.cv_fold_metrics.append(metrics)
-            
-            # Compute average metrics across folds
-            if self.cv_fold_metrics:
-                baseline_rmses = [m.baseline_rmse for m in self.cv_fold_metrics]
-                baseline_maes = [m.baseline_mae for m in self.cv_fold_metrics]
-                baseline_r2s = [m.baseline_r2 for m in self.cv_fold_metrics]
-                fi_rmses = [m.fi_rmse for m in self.cv_fold_metrics]
-                fi_maes = [m.fi_mae for m in self.cv_fold_metrics]
-                fi_r2s = [m.fi_r2 for m in self.cv_fold_metrics]
-                
-                self.average_cv_metrics = {
-                    "baseline": {
-                        "rmse": float(np.mean(baseline_rmses)),
-                        "mae": float(np.mean(baseline_maes)),
-                        "r2": float(np.mean(baseline_r2s)),
-                    },
-                    "fiAdaBoost": {
-                        "rmse": float(np.mean(fi_rmses)),
-                        "mae": float(np.mean(fi_maes)),
-                        "r2": float(np.mean(fi_r2s)),
-                    },
-                }
-        except Exception as e:
-            print(f"Warning: Failed to load CV metrics: {e}")
+    def _model_supports_feature_count(self, model: object, expected_count: int) -> bool:
+        wrapped = getattr(model, "_model", model)
+        feature_count = getattr(wrapped, "n_features_in_", None)
+        if feature_count is not None:
+            return int(feature_count) == expected_count
 
-    def _load_training_dataset(self) -> pd.DataFrame:
-        if not PROCESSED_DATA_FILE.exists():
-            raise FileNotFoundError(f"Missing processed training dataset: {PROCESSED_DATA_FILE}")
+        estimators = getattr(model, "estimators_", None)
+        if estimators:
+            first_feature_count = getattr(estimators[0], "n_features_in_", None)
+            if first_feature_count is not None:
+                return int(first_feature_count) == expected_count
 
-        df = pd.read_csv(PROCESSED_DATA_FILE)
-        if "date" not in df.columns:
-            raise ValueError("Processed training dataset is missing 'date'")
-        if TRAINING_TARGET not in df.columns:
-            raise ValueError(f"Processed training dataset is missing '{TRAINING_TARGET}'")
+        return True
 
-        df["date"] = pd.to_datetime(df["date"], errors="coerce")
-        df = df.dropna(subset=["date", TRAINING_TARGET]).sort_values("date").reset_index(drop=True)
-        return df
+    def _train_fi_model(self) -> FIAdaBoostRegressor:
+        assert self.df is not None
+        X = self.df[FI_FEATURES].values.astype(float)
+        y = self._target_j(self.df)
+        model = FIAdaBoostRegressor()
+        model.fit(X, y)
+        return model
 
-    def _build_training_feature_set(
-        self,
-        df: pd.DataFrame,
-        expected_features: list[str] | None = None,
-    ) -> tuple[pd.DataFrame, pd.Series, pd.Series]:
-        drop_cols = [TRAINING_TARGET, "date", "element", "id", "month"] + TRAINING_LEAKAGE_COLS
+    def _train_baseline_model(self) -> BaselineAdaBoost:
+        assert self.df is not None
+        X = self.df[BASELINE_FEATURES].values.astype(float)
+        y = self._target_j(self.df)
+        model = BaselineAdaBoost()
+        model.fit(X, y)
+        return model
 
-        X = df.drop(columns=[col for col in drop_cols if col in df.columns], errors="ignore")
-        X = X.select_dtypes(include=["number"]).copy()
-        X = X.replace([np.inf, -np.inf], np.nan).ffill().bfill().fillna(0.0)
+    # ── Analytics ─────────────────────────────────────────────────────────
 
-        if expected_features is not None:
-            for feature in expected_features:
-                if feature not in X.columns:
-                    X[feature] = 0.0
-            X = X[expected_features]
+    def _evaluate_metrics(self, y_true: np.ndarray, y_pred: np.ndarray) -> dict[str, float]:
+        return {
+            "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
+            "mae": float(mean_absolute_error(y_true, y_pred)),
+            "r2": float(r2_score(y_true, y_pred)),
+        }
 
-        y = pd.to_numeric(df[TRAINING_TARGET], errors="coerce").fillna(0.0).astype(float)
-        dates = df["date"].astype(str)
-        return X, y, dates
+    def _analytics_test_df(self) -> pd.DataFrame:
+        assert self.df is not None
+        idx = np.arange(len(self.df))
+        _, test_idx = train_test_split(
+            idx,
+            test_size=0.20,
+            random_state=RANDOM_SEED,
+            shuffle=True,
+        )
+        return self.df.iloc[test_idx].reset_index(drop=True)
 
-    def _compute_feature_ranking_from_models(
-        self,
-        fi_model: FIAdaBoostRegressor,
-        baseline_model: AdaBoostRegressor,
-        feature_names: list[str],
-    ) -> list[dict[str, str | float | int]]:
-        fi_importance = np.zeros(len(feature_names), dtype=float)
-        if len(fi_model.estimators_) > 0:
-            weights = np.asarray(fi_model.estimator_weights_, dtype=float)
+    def _compute_feature_importance_ranking(self) -> list[dict[str, str | float | int]]:
+        """Build per-feature ranking for FI_FEATURES. Baseline importances are
+        padded with zeros for features it was not trained on."""
+        assert self.fi_model is not None and self.baseline_model is not None
+
+        # FI model: weighted average over weak learners
+        fi_importance = np.zeros(len(FI_FEATURES), dtype=float)
+        if len(self.fi_model.estimators_) > 0:
+            weights = np.asarray(self.fi_model.estimator_weights_, dtype=float)
             if np.sum(weights) <= 0:
                 weights = np.ones_like(weights)
             weights = weights / np.sum(weights)
-
-            for index, estimator in enumerate(fi_model.estimators_):
+            for i, estimator in enumerate(self.fi_model.estimators_):
                 if hasattr(estimator, "feature_importances_"):
-                    fi_importance += weights[index] * np.asarray(estimator.feature_importances_, dtype=float)
+                    fi_importance += weights[i] * np.asarray(
+                        estimator.feature_importances_, dtype=float
+                    )
 
-        baseline_importance = np.asarray(
-            getattr(baseline_model, "feature_importances_", np.zeros(len(feature_names))),
+        # Baseline model: only trained on BASELINE_FEATURES (lat, lon)
+        # Pad zeros for the spatial features it doesn't use
+        base_raw = np.asarray(
+            getattr(self.baseline_model, "feature_importances_", np.zeros(len(BASELINE_FEATURES))),
             dtype=float,
         )
+        baseline_importance = np.zeros(len(FI_FEATURES), dtype=float)
+        for i, feat in enumerate(BASELINE_FEATURES):
+            if feat in FI_FEATURES:
+                baseline_importance[FI_FEATURES.index(feat)] = base_raw[i]
 
         records: list[dict[str, str | float | int]] = []
-        for index, feature in enumerate(feature_names):
+        for i, feature in enumerate(FI_FEATURES):
             records.append(
                 {
                     "feature": feature,
-                    "fiAdaBoostImportance": float(fi_importance[index]),
-                    "baselineImportance": float(baseline_importance[index]),
-                    "importanceGain": float(fi_importance[index] - baseline_importance[index]),
+                    "fiAdaBoostImportance": float(fi_importance[i]),
+                    "baselineImportance": float(baseline_importance[i]),
+                    "importanceGain": float(fi_importance[i] - baseline_importance[i]),
                     "rank": 0,
                 }
             )
 
-        records.sort(key=lambda item: float(item["fiAdaBoostImportance"]), reverse=True)
+        records.sort(key=lambda r: float(r["fiAdaBoostImportance"]), reverse=True)
         for rank, row in enumerate(records, start=1):
             row["rank"] = rank
         return records
+
+    def _compute_global_analytics(self) -> None:
+        assert self.df is not None and self.fi_model is not None and self.baseline_model is not None
+
+        test_df = self._analytics_test_df()
+
+        X_fi_test = test_df[FI_FEATURES].values.astype(float)
+        X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
+        y_fi_test = self._target_j(test_df)
+        y_base_test = self._target_j(test_df)
+
+        baseline_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float)
+        fi_pred = np.asarray(self.fi_model.predict(X_fi_test), dtype=float)
+
+        self.performance_metrics = {
+            "baseline": self._evaluate_metrics(y_base_test, baseline_pred),
+            "fiAdaBoost": self._evaluate_metrics(y_fi_test, fi_pred),
+        }
+        self.feature_importance_ranking = self._compute_feature_importance_ranking()
 
     def _build_error_distribution(
         self,
@@ -301,108 +341,74 @@ class ModelContext:
         baseline_counts, _ = np.histogram(baseline_residuals, bins=edges)
         fi_counts, _ = np.histogram(fi_residuals, bins=edges)
 
-        histogram: list[ErrorDistributionBin] = []
-        for index in range(len(edges) - 1):
-            histogram.append(
-                ErrorDistributionBin(
-                    bucket=f"{edges[index]:.0f} to {edges[index + 1]:.0f}",
-                    baseline=int(baseline_counts[index]),
-                    fiAdaBoost=int(fi_counts[index]),
-                )
+        return [
+            ErrorDistributionBin(
+                bucket=f"{edges[i]:.0f} to {edges[i + 1]:.0f}",
+                baseline=int(baseline_counts[i]),
+                fiAdaBoost=int(fi_counts[i]),
             )
-        return histogram
+            for i in range(len(edges) - 1)
+        ]
 
     def _compute_training_analytics(self) -> None:
         self.training_analytics = None
-
-        fi_candidates = [FI_MODEL_FILE, FI_FALLBACK_MODEL_FILE]
-        baseline_candidates = [BASELINE_MODEL_FILE, BASELINE_FALLBACK_MODEL_FILE]
-
-        self.training_fi_model = None
-        for model_path in fi_candidates:
-            if model_path.exists():
-                self.training_fi_model = self._load_model_file(model_path)
-                if self.training_fi_model is not None:
-                    break
-
-        self.training_baseline_model = None
-        for model_path in baseline_candidates:
-            if model_path.exists():
-                self.training_baseline_model = self._load_model_file(model_path)
-                if self.training_baseline_model is not None:
-                    break
-
-        if self.training_fi_model is None or self.training_baseline_model is None:
+        if self.df is None or self.fi_model is None or self.baseline_model is None:
             return
 
-        try:
-            training_df = self._load_training_dataset()
-        except (FileNotFoundError, ValueError) as exc:
-            print(f"Warning: Skipping training analytics: {exc}")
-            return
-        expected_features = list(getattr(self.training_baseline_model, "feature_names_in_", []))
-        X, y, dates = self._build_training_feature_set(training_df, expected_features or None)
-
-        split_idx = int(0.8 * len(X))
-        if split_idx <= 0 or split_idx >= len(X):
+        if len(self.df) < 2:
             return
 
-        X_test = X.iloc[split_idx:]
-        y_test = y.iloc[split_idx:].reset_index(drop=True)
-        dates_test = dates.iloc[split_idx:].reset_index(drop=True)
+        test_df = self._analytics_test_df()
 
-        baseline_pred = np.asarray(self.training_baseline_model.predict(X_test), dtype=float)
-        fi_pred = np.asarray(self.training_fi_model.predict(X_test), dtype=float)
+        X_fi_test = test_df[FI_FEATURES].values.astype(float)
+        X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
+        y_fi_test = self._target_j(test_df)
+        y_base_test = self._target_j(test_df)
 
-        baseline_metrics = self._evaluate_metrics(y_test, baseline_pred)
-        fi_metrics = self._evaluate_metrics(y_test, fi_pred)
+        # Use the same target scale (kWh/m²/day) for display
+        y_fi_kwh = y_fi_test / KWH_TO_J
+        y_base_kwh = y_base_test / KWH_TO_J
+
+        baseline_pred_kwh = np.asarray(self.baseline_model.predict(X_base_test), dtype=float) / KWH_TO_J
+        fi_pred_kwh = np.asarray(self.fi_model.predict(X_fi_test), dtype=float) / KWH_TO_J
+
+        baseline_metrics = self._evaluate_metrics(y_base_kwh, baseline_pred_kwh)
+        fi_metrics = self._evaluate_metrics(y_fi_kwh, fi_pred_kwh)
         self.performance_metrics = {
             "baseline": baseline_metrics,
             "fiAdaBoost": fi_metrics,
         }
 
-        feature_names = expected_features or list(X.columns)
-        self.feature_importance_ranking = self._compute_feature_ranking_from_models(
-            self.training_fi_model,
-            self.training_baseline_model,
-            feature_names,
-        )
+        sample_size = min(220, len(test_df))
+        sample_idx = np.unique(np.linspace(0, len(test_df) - 1, num=sample_size, dtype=int))
 
-        sample_size = min(220, len(y_test))
-        sample_indices = np.linspace(0, len(y_test) - 1, num=sample_size, dtype=int)
-        sample_indices = np.unique(sample_indices)
+        actual_base_sample = y_base_kwh[sample_idx]
+        actual_fi_sample = y_fi_kwh[sample_idx]
+        base_pred_sample = baseline_pred_kwh[sample_idx]
+        fi_pred_sample = fi_pred_kwh[sample_idx]
 
-        actual_sample = y_test.iloc[sample_indices].to_numpy(dtype=float)
-        baseline_sample = baseline_pred[sample_indices]
-        fi_sample = fi_pred[sample_indices]
-        date_sample = dates_test.iloc[sample_indices].tolist()
+        # Use index as a stand-in date label (no date column in integrated_dataset)
+        date_labels = [str(test_df.index[i]) for i in sample_idx]
 
-        domain_min = float(min(actual_sample.min(), baseline_sample.min(), fi_sample.min()))
-        domain_max = float(max(actual_sample.max(), baseline_sample.max(), fi_sample.max()))
+        all_vals = np.concatenate([actual_base_sample, actual_fi_sample, base_pred_sample, fi_pred_sample])
+        domain_min = float(np.min(all_vals))
+        domain_max = float(np.max(all_vals))
 
         predicted_vs_actual = PredictedVsActualData(
             baseline=[
-                PredictedActualPoint(
-                    actual=float(actual),
-                    predicted=float(predicted),
-                    date=str(date_value),
-                )
-                for actual, predicted, date_value in zip(actual_sample, baseline_sample, date_sample)
+                PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                for a, p, d in zip(actual_base_sample, base_pred_sample, date_labels)
             ],
             fiAdaBoost=[
-                PredictedActualPoint(
-                    actual=float(actual),
-                    predicted=float(predicted),
-                    date=str(date_value),
-                )
-                for actual, predicted, date_value in zip(actual_sample, fi_sample, date_sample)
+                PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                for a, p, d in zip(actual_fi_sample, fi_pred_sample, date_labels)
             ],
             domainMin=domain_min,
             domainMax=domain_max,
         )
 
-        baseline_residuals = baseline_pred - y_test.to_numpy(dtype=float)
-        fi_residuals = fi_pred - y_test.to_numpy(dtype=float)
+        baseline_residuals = baseline_pred_kwh - y_base_kwh
+        fi_residuals = fi_pred_kwh - y_fi_kwh
 
         self.training_analytics = TrainingAnalyticsResponse(
             performanceMetricsComparison={
@@ -410,13 +416,11 @@ class ModelContext:
                 "fiAdaBoost": fi_metrics,
                 "rmseImprovementPct": float(
                     ((baseline_metrics["rmse"] - fi_metrics["rmse"]) / baseline_metrics["rmse"] * 100)
-                    if baseline_metrics["rmse"] != 0
-                    else 0.0
+                    if baseline_metrics["rmse"] != 0 else 0.0
                 ),
                 "maeImprovementPct": float(
                     ((baseline_metrics["mae"] - fi_metrics["mae"]) / baseline_metrics["mae"] * 100)
-                    if baseline_metrics["mae"] != 0
-                    else 0.0
+                    if baseline_metrics["mae"] != 0 else 0.0
                 ),
                 "r2ImprovementPct": float((fi_metrics["r2"] - baseline_metrics["r2"]) * 100),
             },
@@ -430,239 +434,77 @@ class ModelContext:
             },
         )
 
-    def _build_feature_frame(self, lat_series: pd.Series, lon_series: pd.Series, current_month: int = None) -> pd.DataFrame:
-        """Generate engineered features matching feature_engineering.py pipeline."""
-        from datetime import datetime
-        
-        lat = lat_series.astype(float)
-        lon = lon_series.astype(float)
-        
-        # Use current month if not provided
-        if current_month is None:
-            current_month = datetime.now().month
-        
-        # Temporal features (from feature_engineering.py)
-        month_sin = np.sin(2 * np.pi * current_month / 12)
-        month_cos = np.cos(2 * np.pi * current_month / 12)
-        season = 1 if current_month in [12, 1, 2, 3, 4, 5] else 0  # Dry=1, Rainy=0
-        
-        # Davao City average weather conditions with location-based variation
-        # Urban core (near 7.07, 125.61) is warmer, more humid
-        distance_to_center = np.sqrt((lat - 7.0731) ** 2 + (lon - 125.6128) ** 2)
-        urban_factor = np.exp(-distance_to_center * 10)  # Decreases with distance from center
-        
-        T2M = 25.39 + urban_factor * 1.5  # Urban heat island effect
-        RH2M = 82.0 + urban_factor * 8.0   # Higher humidity in dense areas
-        ALLSKY_KT = 0.48 + (1 - urban_factor) * 0.10  # Clearer skies in suburbs
-        
-        # Topographical features vary by location
-        # Urban areas have more buildings (more shading, smaller rooftops)
-        rooftop_area_sq_m = 80.0 + (1 - urban_factor) * 40.0  # 80-120 m²
-        nearby_count = 2.0 + urban_factor * 8.0  # 2-10 nearby buildings
-        shading_factor = 0.10 + urban_factor * 0.25  # 10-35% shading
-        orientation_score = 0.75 + (lat - 7.0) * 0.05  # Varies slightly with latitude
-        
-        optimal_tilt = 7.2
-        roof_tilt = 0.0
-        tilt_factor = np.cos(np.radians(abs(roof_tilt - optimal_tilt)))
-        azimuth = 180.0  # South-facing for northern hemisphere tropics
-        
-        # Solar Exposure Index (from feature_engineering.py formula)
-        solar_exposure_index = (
-            orientation_score
-            * rooftop_area_sq_m
-            * (1 - shading_factor)
-            * tilt_factor
-        )
-        
-        return pd.DataFrame(
-            {
-                "T2M": T2M,
-                "RH2M": RH2M,
-                "ALLSKY_KT": ALLSKY_KT,
-                "lat": lat,
-                "lon": lon,
-                "month_sin": month_sin,
-                "month_cos": month_cos,
-                "season": season,
-                "orientation_score": orientation_score,
-                "shading_factor": shading_factor,
-                "tilt_factor": tilt_factor,
-                "solar_exposure_index": solar_exposure_index,
-                "rooftop_area_sq_m": rooftop_area_sq_m,
-                "azimuth": azimuth,
-                "nearby_count": nearby_count,
-            }
-        )
-
-    def _build_features_from_df(self, df: pd.DataFrame, current_month: int = None) -> pd.DataFrame:
-        return self._build_feature_frame(df["lat"], df["lon"], current_month)
-
-    def _build_features_for_point(self, lat: float, lng: float, current_month: int = None) -> pd.DataFrame:
-        return self._build_feature_frame(
-            pd.Series([lat], dtype=float),
-            pd.Series([lng], dtype=float),
-            current_month
-        )
-
-    def load_data(self) -> pd.DataFrame:
-        selected_file = next((path for path in DATA_CANDIDATES if path.exists()), None)
-        if selected_file is None:
-            raise FileNotFoundError(
-                "Missing spatial dataset. Expected one of: "
-                + ", ".join(str(path) for path in DATA_CANDIDATES)
-            )
-
-        df = pd.read_csv(selected_file)
-
-        required_cols = ["lat", "lon", "GHI_mean_2024"]
-        missing = [col for col in required_cols if col not in df.columns]
-        if missing:
-            raise ValueError(f"Missing required columns in {selected_file.name}: {missing}")
-
-        df = df.dropna(subset=["lat", "lon", "GHI_mean_2024"]).copy()
-
-        if df["lat"].nunique(dropna=True) < 2 or df["lon"].nunique(dropna=True) < 2:
-            raise ValueError(
-                f"Dataset {selected_file.name} has insufficient coordinate diversity for location-aware predictions."
-            )
-
-        return df
-
-    def train_model(self, df: pd.DataFrame) -> FIAdaBoostRegressor:
-        X = self._build_features_from_df(df)
-        y = df["GHI_mean_2024"].astype(float)
-
-        model = FIAdaBoostRegressor(
-            n_estimators=50,
-            max_depth=3,
-            random_state=42,
-            use_weighted_median=True,
-        )
-        model.fit(X, y)
-        return model
-
-    def train_baseline_model(self, df: pd.DataFrame) -> AdaBoostRegressor:
-        X = self._build_features_from_df(df)
-        y = df["GHI_mean_2024"].astype(float)
-
-        model = AdaBoostRegressor(
-            estimator=DecisionTreeRegressor(max_depth=2, random_state=42),
-            n_estimators=20,
-            learning_rate=0.7,
-            random_state=42,
-        )
-        model.fit(X, y)
-        return model
-
-    def _evaluate_metrics(self, y_true: pd.Series, y_pred: np.ndarray) -> dict[str, float]:
-        return {
-            "rmse": float(np.sqrt(mean_squared_error(y_true, y_pred))),
-            "mae": float(mean_absolute_error(y_true, y_pred)),
-            "r2": float(r2_score(y_true, y_pred)),
-        }
-
-    def _compute_feature_ranking(self, X: pd.DataFrame) -> list[dict[str, str | float | int]]:
-        if self.fi_model is None or self.baseline_model is None:
-            return []
-
-        feature_names = list(X.columns)
-
-        # FI-AdaBoost importance: weighted average across weak learners
-        fi_importance = np.zeros(len(feature_names), dtype=float)
-        if len(self.fi_model.estimators_) > 0:
-            weights = np.asarray(self.fi_model.estimator_weights_, dtype=float)
-            if np.sum(weights) <= 0:
-                weights = np.ones_like(weights)
-            weights = weights / np.sum(weights)
-
-            for index, estimator in enumerate(self.fi_model.estimators_):
-                if hasattr(estimator, "feature_importances_"):
-                    fi_importance += weights[index] * np.asarray(estimator.feature_importances_, dtype=float)
-
-        # Baseline importance from sklearn AdaBoost
-        baseline_importance = np.asarray(getattr(self.baseline_model, "feature_importances_", np.zeros(len(feature_names))), dtype=float)
-
-        records: list[dict[str, str | float | int]] = []
-        for index, feature in enumerate(feature_names):
-            records.append(
-                {
-                    "feature": feature,
-                    "fiAdaBoostImportance": float(fi_importance[index]),
-                    "baselineImportance": float(baseline_importance[index]),
-                    "importanceGain": float(fi_importance[index] - baseline_importance[index]),
-                    "rank": 0,
-                }
-            )
-
-        records.sort(key=lambda item: float(item["fiAdaBoostImportance"]), reverse=True)
-        for rank, row in enumerate(records, start=1):
-            row["rank"] = rank
-
-        return records
-
-    def _compute_global_analytics(self) -> None:
-        if self.fi_model is None or self.baseline_model is None or self.df is None:
+    def _load_cv_metrics(self) -> None:
+        if not CV_METRICS_FILE.exists():
             return
+        try:
+            df = pd.read_csv(CV_METRICS_FILE)
+            self.cv_fold_metrics = []
+            for _, row in df.iterrows():
+                self.cv_fold_metrics.append(
+                    CVFoldMetrics(
+                        fold=int(row["fold"]),
+                        baseline_rmse=float(row["baseline_RMSE"]),
+                        baseline_mae=float(row["baseline_MAE"]),
+                        baseline_r2=float(row["baseline_R2"]),
+                        fi_rmse=float(row["fi_RMSE"]),
+                        fi_mae=float(row["fi_MAE"]),
+                        fi_r2=float(row["fi_R2"]),
+                    )
+                )
+            if self.cv_fold_metrics:
+                self.average_cv_metrics = {
+                    "baseline": {
+                        "rmse": float(np.mean([m.baseline_rmse for m in self.cv_fold_metrics])),
+                        "mae": float(np.mean([m.baseline_mae for m in self.cv_fold_metrics])),
+                        "r2": float(np.mean([m.baseline_r2 for m in self.cv_fold_metrics])),
+                    },
+                    "fiAdaBoost": {
+                        "rmse": float(np.mean([m.fi_rmse for m in self.cv_fold_metrics])),
+                        "mae": float(np.mean([m.fi_mae for m in self.cv_fold_metrics])),
+                        "r2": float(np.mean([m.fi_r2 for m in self.cv_fold_metrics])),
+                    },
+                }
+        except Exception as exc:
+            print(f"Warning: Failed to load CV metrics: {exc}")
 
-        X = self._build_features_from_df(self.df)
-        y = self.df["GHI_mean_2024"].astype(float)
-
-        baseline_pred = self.baseline_model.predict(X)
-        fi_pred = self.fi_model.predict(X)
-
-        self.performance_metrics = {
-            "baseline": self._evaluate_metrics(y, baseline_pred),
-            "fiAdaBoost": self._evaluate_metrics(y, fi_pred),
-        }
-        self.feature_importance_ranking = self._compute_feature_ranking(X)
+    # ── Startup ───────────────────────────────────────────────────────────
 
     def ensure_loaded(self) -> None:
-        self.df = self.load_data()
+        self.df = self._load_dataset()
+        self._build_kd_tree()
 
-        # Prefer canonical trained artifacts first, then API-spatial fallback artifacts.
-        fi_candidates = [FI_MODEL_FILE, FI_FALLBACK_MODEL_FILE]
-        baseline_candidates = [BASELINE_MODEL_FILE, BASELINE_FALLBACK_MODEL_FILE]
+        # Try loading canonical persisted models; fall back to training fresh.
+        fi_candidates = [FI_MODEL_FILE]
+        baseline_candidates = [BASELINE_MODEL_FILE]
 
         self.fi_model = None
-        for model_path in fi_candidates:
-            if model_path.exists():
-                loaded = self._load_model_file(model_path)
-                if loaded is not None:
+        for path in fi_candidates:
+            if path.exists():
+                loaded = self._load_model_file(path)
+                if loaded is not None and self._model_supports_feature_count(loaded, len(FI_FEATURES)):
                     self.fi_model = loaded
                     break
 
         self.baseline_model = None
-        for model_path in baseline_candidates:
-            if model_path.exists():
-                loaded = self._load_model_file(model_path)
-                if loaded is not None:
+        for path in baseline_candidates:
+            if path.exists():
+                loaded = self._load_model_file(path)
+                if loaded is not None and self._model_supports_feature_count(loaded, len(BASELINE_FEATURES)):
                     self.baseline_model = loaded
                     break
 
         if self.fi_model is None:
-            self.fi_model = self.train_model(self.df)
-            joblib.dump(self.fi_model, FI_FALLBACK_MODEL_FILE)
+            print("Training FI-AdaBoost model from integrated_dataset.csv …")
+            self.fi_model = self._train_fi_model()
+            joblib.dump(self.fi_model, FI_MODEL_FILE)
 
         if self.baseline_model is None:
-            self.baseline_model = self.train_baseline_model(self.df)
-            joblib.dump(self.baseline_model, BASELINE_FALLBACK_MODEL_FILE)
+            print("Training baseline AdaBoost model from integrated_dataset.csv …")
+            self.baseline_model = self._train_baseline_model()
+            joblib.dump(self.baseline_model, BASELINE_MODEL_FILE)
 
-        try:
-            self._compute_global_analytics()
-        except ValueError as exc:
-            message = str(exc)
-            if "feature names should match" not in message:
-                raise
-
-            # Auto-heal when persisted model feature schema no longer matches current engineered features.
-            self.fi_model = self.train_model(self.df)
-            self.baseline_model = self.train_baseline_model(self.df)
-            joblib.dump(self.fi_model, FI_FALLBACK_MODEL_FILE)
-            joblib.dump(self.baseline_model, BASELINE_FALLBACK_MODEL_FILE)
-            self._compute_global_analytics()
-        
-        # Load cross-validation metrics
+        self._compute_global_analytics()
         self._load_cv_metrics()
         self._compute_training_analytics()
 
@@ -674,6 +516,8 @@ ctx = ModelContext()
 def startup_event() -> None:
     ctx.ensure_loaded()
 
+
+# ── Helpers ───────────────────────────────────────────────────────────────────
 
 @app.get("/")
 def root() -> dict[str, str]:
@@ -704,35 +548,18 @@ def _get_orientation_and_azimuth(lat: float) -> tuple[str, float]:
     return "North", 0.0
 
 
-def _derive_conditions(solar_potential: float, lat: float, lng: float) -> tuple[float, float, float, float, float]:
-    clear_sky_ratio = float(np.clip(solar_potential / 8.0, 0.25, 0.9))
+def _derive_conditions(
+    solar_potential_kwh: float,
+    lat: float,
+    lng: float,
+) -> tuple[float, float, float, float, float]:
+    clear_sky_ratio = float(np.clip(solar_potential_kwh / 8.0, 0.25, 0.9))
     sunshine_hours = float(np.clip(3.5 + clear_sky_ratio * 7.0, 3.0, 10.5))
     cloud_cover = float(np.clip((1.0 - clear_sky_ratio) * 100.0, 8.0, 85.0))
-
     latitude_factor = abs(lat) / 20.0
     temperature = float(np.clip(31.0 - latitude_factor * 8.0 + (clear_sky_ratio - 0.5) * 3.0, 20.0, 36.0))
     humidity = float(np.clip(88.0 - (clear_sky_ratio * 35.0) + (abs(lng) % 1.0) * 8.0, 40.0, 95.0))
-
     return clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity
-
-
-def _add_local_micro_variation(
-    base_prediction: float,
-    lat: float,
-    lng: float,
-) -> float:
-    lat_micro = int(abs(lat * 10000)) % 1000
-    lng_micro = int(abs(lng * 10000)) % 1000
-
-    spatial_hash = (lat_micro * 73 + lng_micro * 37) % 100
-    variation_factor = 1.0 + (spatial_hash - 50) * 0.0012
-
-    lat_wave = np.sin(lat * 100) * 0.02
-    lng_wave = np.cos(lng * 100) * 0.02
-
-    local_adjusted = base_prediction * variation_factor * (1.0 + lat_wave + lng_wave)
-
-    return float(np.clip(local_adjusted, base_prediction * 0.85, base_prediction * 1.15))
 
 
 def _compute_confidence_level(
@@ -742,62 +569,36 @@ def _compute_confidence_level(
     fi_solar: float,
     df: pd.DataFrame,
 ) -> float:
-    coordinates = df[["lat", "lon"]].astype(float).to_numpy()
-    deltas = coordinates - np.array([[lat, lng]], dtype=float)
-    distances_deg = np.sqrt(np.sum(deltas * deltas, axis=1))
-    distances_km = distances_deg * 111.0
+    coords = df[["lat", "lon"]].astype(float).to_numpy()
+    distances_km = np.sqrt(np.sum((coords - np.array([[lat, lng]])) ** 2, axis=1)) * 111.0
 
-    nearest_distance_km = float(np.min(distances_km))
+    nearest_km = float(np.min(distances_km))
+    proximity_conf = float(np.clip(100.0 - nearest_km * 2.5, 35.0, 99.0))
 
-    # 1) Proximity confidence: close to training points -> more reliable interpolation
-    proximity_conf = float(np.clip(100.0 - nearest_distance_km * 2.5, 35.0, 99.0))
-
-    # 2) Density confidence: many nearby points -> stronger local support
     k = int(min(25, len(distances_km)))
-    k_nearest = np.partition(distances_km, k - 1)[:k] if k > 0 else np.array([nearest_distance_km])
-    median_km = float(np.median(k_nearest))
-    density_conf = float(np.clip(100.0 - median_km * 1.8, 35.0, 99.0))
+    k_nearest = np.partition(distances_km, k - 1)[:k] if k > 0 else np.array([nearest_km])
+    density_conf = float(np.clip(100.0 - float(np.median(k_nearest)) * 1.8, 35.0, 99.0))
 
-    # 3) Model-agreement confidence: normalize by dataset variability to avoid over-penalizing
-    target_std = float(df["GHI_mean_2024"].astype(float).std()) if "GHI_mean_2024" in df.columns else 1.0
-    target_std = max(target_std, 1e-6)
-    model_gap_sigma = abs(fi_solar - baseline_solar) / target_std
-    agreement_conf = float(np.clip(100.0 - model_gap_sigma * 35.0, 35.0, 99.0))
+    target_std = max(float(df[TARGET_J].astype(float).std() / KWH_TO_J), 1e-6)
+    agreement_conf = float(np.clip(100.0 - abs(fi_solar - baseline_solar) / target_std * 35.0, 35.0, 99.0))
 
-    # Weighted blend tuned for geospatial serving: local support dominates.
-    combined_conf = 0.5 * proximity_conf + 0.3 * density_conf + 0.2 * agreement_conf
-    return float(np.clip(combined_conf, 35.0, 99.0))
+    return float(np.clip(0.5 * proximity_conf + 0.3 * density_conf + 0.2 * agreement_conf, 35.0, 99.0))
 
 
-@app.post("/predict", response_model=PredictResponse)
-def predict(payload: PredictRequest) -> PredictResponse:
-    if ctx.fi_model is None or ctx.df is None:
-        raise HTTPException(status_code=503, detail="Model is not ready")
-
-    lat, lng = payload.lat, payload.lng
-    point_features = ctx._build_features_for_point(lat, lng)
-
-    # Get coarse-grid model prediction
-    base_pred = float(ctx.fi_model.predict(point_features)[0])
-    
-    # Add fine-grained local variation for sub-grid accuracy
-    solar_potential = _add_local_micro_variation(base_pred, lat, lng)
-    solar_potential = max(0.0, solar_potential)
-
+def _build_predict_response(
+    lat: float,
+    lng: float,
+    solar_kwh: float,
+    features: dict[str, float],
+) -> PredictResponse:
     clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity = _derive_conditions(
-        solar_potential=solar_potential,
-        lat=lat,
-        lng=lng,
+        solar_kwh, lat, lng
     )
-
-    rooftop_area = float(85.0 + (abs(lat) % 0.5) * 60.0 + (abs(lng) % 0.5) * 35.0)
-    solar_exposure_index = float(np.clip((solar_potential / 7.0) * 0.85 + clear_sky_ratio * 0.15, 0.0, 1.0))
     orientation, azimuth = _get_orientation_and_azimuth(lat)
-
     return PredictResponse(
-        solarPotential=solar_potential,
-        rooftopArea=rooftop_area,
-        solarExposureIndex=solar_exposure_index,
+        solarPotential=solar_kwh,
+        rooftopArea=features["rooftop_area_sq_m"],
+        solarExposureIndex=features["SEI_norm"],
         orientation=orientation,
         azimuth=azimuth,
         sunshineHours=sunshine_hours,
@@ -808,70 +609,45 @@ def predict(payload: PredictRequest) -> PredictResponse:
     )
 
 
+# ── Endpoints ─────────────────────────────────────────────────────────────────
+
+@app.post("/predict", response_model=PredictResponse)
+def predict(payload: PredictRequest) -> PredictResponse:
+    if ctx.fi_model is None or ctx._kd_tree is None:
+        raise HTTPException(status_code=503, detail="Model is not ready")
+
+    lat, lng = payload.lat, payload.lng
+    features = ctx._get_nearest_features(lat, lng)
+
+    X_fi = np.array([[lat, lng, features["orientation_score"], features["shading_factor"],
+                      features["tilt_factor"], features["SEI_norm"]]])
+    ghi_j = float(ctx.fi_model.predict(X_fi)[0])
+    solar_kwh = max(0.0, ghi_j / KWH_TO_J)
+
+    return _build_predict_response(lat, lng, solar_kwh, features)
+
+
 @app.post("/compare", response_model=CompareResponse)
 def compare_models(payload: PredictRequest) -> CompareResponse:
-    """Compare baseline AdaBoost vs FI-AdaBoost predictions for the same location."""
-    if ctx.fi_model is None or ctx.baseline_model is None or ctx.df is None:
+    if ctx.fi_model is None or ctx.baseline_model is None or ctx._kd_tree is None:
         raise HTTPException(status_code=503, detail="Models are not ready")
 
     lat, lng = payload.lat, payload.lng
-    point_features = ctx._build_features_for_point(lat, lng)
+    features = ctx._get_nearest_features(lat, lng)
 
-    # Baseline AdaBoost prediction
-    baseline_base = float(ctx.baseline_model.predict(point_features)[0])
-    baseline_solar = _add_local_micro_variation(baseline_base, lat, lng)
-    baseline_solar = max(0.0, baseline_solar)
+    X_base = np.array([[lat, lng]])
+    X_fi = np.array([[lat, lng, features["orientation_score"], features["shading_factor"],
+                      features["tilt_factor"], features["SEI_norm"]]])
 
-    # FI-AdaBoost prediction
-    fi_base = float(ctx.fi_model.predict(point_features)[0])
-    fi_solar = _add_local_micro_variation(fi_base, lat, lng)
-    fi_solar = max(0.0, fi_solar)
+    baseline_kwh = max(0.0, float(ctx.baseline_model.predict(X_base)[0]) / KWH_TO_J)
+    fi_kwh = max(0.0, float(ctx.fi_model.predict(X_fi)[0]) / KWH_TO_J)
 
-    # Shared derived metrics
-    baseline_csr, baseline_sun, baseline_cloud, baseline_temp, baseline_hum = _derive_conditions(
-        baseline_solar, lat, lng
-    )
-    fi_csr, fi_sun, fi_cloud, fi_temp, fi_hum = _derive_conditions(fi_solar, lat, lng)
+    baseline_result = _build_predict_response(lat, lng, baseline_kwh, features)
+    fi_result = _build_predict_response(lat, lng, fi_kwh, features)
 
-    rooftop_area = float(85.0 + (abs(lat) % 0.5) * 60.0 + (abs(lng) % 0.5) * 35.0)
-    orientation, azimuth = _get_orientation_and_azimuth(lat)
-
-    baseline_result = PredictResponse(
-        solarPotential=baseline_solar,
-        rooftopArea=rooftop_area,
-        solarExposureIndex=float(np.clip((baseline_solar / 7.0) * 0.85 + baseline_csr * 0.15, 0.0, 1.0)),
-        orientation=orientation,
-        azimuth=azimuth,
-        sunshineHours=baseline_sun,
-        cloudCover=baseline_cloud,
-        temperature=baseline_temp,
-        humidity=baseline_hum,
-        clearSkyRatio=baseline_csr,
-    )
-
-    fi_result = PredictResponse(
-        solarPotential=fi_solar,
-        rooftopArea=rooftop_area,
-        solarExposureIndex=float(np.clip((fi_solar / 7.0) * 0.85 + fi_csr * 0.15, 0.0, 1.0)),
-        orientation=orientation,
-        azimuth=azimuth,
-        sunshineHours=fi_sun,
-        cloudCover=fi_cloud,
-        temperature=fi_temp,
-        humidity=fi_hum,
-        clearSkyRatio=fi_csr,
-    )
-
-    # Calculate improvement metrics
-    solar_diff = fi_solar - baseline_solar
-    solar_improvement_pct = (solar_diff / baseline_solar * 100) if baseline_solar != 0 else 0.0
-    confidence_level = _compute_confidence_level(
-        lat=lat,
-        lng=lng,
-        baseline_solar=baseline_solar,
-        fi_solar=fi_solar,
-        df=ctx.df,
-    )
+    solar_diff = fi_kwh - baseline_kwh
+    solar_improvement_pct = (solar_diff / baseline_kwh * 100) if baseline_kwh != 0 else 0.0
+    confidence_level = _compute_confidence_level(lat, lng, baseline_kwh, fi_kwh, ctx.df)
 
     baseline_metrics = ctx.performance_metrics.get("baseline", {"rmse": 0.0, "mae": 0.0, "r2": 0.0})
     fi_metrics = ctx.performance_metrics.get("fiAdaBoost", {"rmse": 0.0, "mae": 0.0, "r2": 0.0})
@@ -890,17 +666,13 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
             "fiAdaBoost": fi_metrics,
             "rmseImprovementPct": float(
                 ((baseline_metrics["rmse"] - fi_metrics["rmse"]) / baseline_metrics["rmse"] * 100)
-                if baseline_metrics["rmse"] != 0
-                else 0.0
+                if baseline_metrics["rmse"] != 0 else 0.0
             ),
             "maeImprovementPct": float(
                 ((baseline_metrics["mae"] - fi_metrics["mae"]) / baseline_metrics["mae"] * 100)
-                if baseline_metrics["mae"] != 0
-                else 0.0
+                if baseline_metrics["mae"] != 0 else 0.0
             ),
-            "r2ImprovementPct": float(
-                (fi_metrics["r2"] - baseline_metrics["r2"]) * 100
-            ),
+            "r2ImprovementPct": float((fi_metrics["r2"] - baseline_metrics["r2"]) * 100),
         },
         featureImportanceRanking=ctx.feature_importance_ranking,
     )
@@ -908,10 +680,8 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
 
 @app.get("/cv-metrics", response_model=CVMetricsResponse)
 def get_cv_metrics() -> CVMetricsResponse:
-    """Get cross-validation metrics for both models."""
     if not ctx.cv_fold_metrics:
         raise HTTPException(status_code=503, detail="CV metrics are not available")
-    
     return CVMetricsResponse(
         cv_fold_metrics=ctx.cv_fold_metrics,
         average_metrics=ctx.average_cv_metrics,
@@ -920,9 +690,6 @@ def get_cv_metrics() -> CVMetricsResponse:
 
 @app.get("/training-analytics", response_model=TrainingAnalyticsResponse)
 def get_training_analytics() -> TrainingAnalyticsResponse:
-    """Return plot-ready analytics derived from the saved training artifacts."""
     if ctx.training_analytics is None:
         raise HTTPException(status_code=503, detail="Training analytics are not available")
-
     return ctx.training_analytics
-

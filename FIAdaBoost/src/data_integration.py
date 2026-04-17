@@ -1,69 +1,159 @@
+"""
+data_integration.py
+────────────────────────────────────────────────────────────────────────────
+Integrates the 3,000-point spatial dataset with per-building OSM features.
+
+DESIGN
+──────
+  Input A : baseline_spatial_clean_2024.csv
+              3,000 rows  —  lat | lon | GHI_mean_2024 (kWh/m²/day)
+              (one row per random coordinate inside Davao City)
+
+  Input B : osm_features.geojson
+              up to 10,000 building polygons with computed features:
+              rooftop_area_sq_m, orientation_score, shading_factor,
+              tilt_factor, solar_exposure_index, SEI_norm
+
+  Join method : Spatial nearest-neighbour
+              Each of the 3,000 random points is matched to the
+              geographically closest OSM building centroid.
+              The matched building's features are attached to the point.
+
+  Why nearest-neighbour (not a cross-join):
+              Each coordinate represents ONE location in the city.
+              The most appropriate building features for that location
+              are those of the nearest building — just as an on-site
+              survey would measure the rooftop at that address.
+
+  Output : integrated_dataset.csv  —  3,000 rows
+              lat | lon | GHI_mean_J | rooftop_area_sq_m |
+              orientation_score | shading_factor | tilt_factor | SEI_norm
+
+  Unit conversion:
+              GHI_mean_kWh × 3,600,000 = GHI_mean_J  (J/m²/day)
+              This matches the Quezon City baseline study's unit for
+              RMSE and MAE (their Table 2 values are in J/m²).
+────────────────────────────────────────────────────────────────────────────
+"""
 import os
 import numpy as np
 import pandas as pd
 import geopandas as gpd
+from scipy.spatial import cKDTree
 
-ROOT_DIR = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+ROOT_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DIR = os.path.join(ROOT_DIR, "data", "processed")
 
-# Safety limit for laptop training
-BUILDING_SAMPLE_SIZE = 10000
+KWH_TO_J  = 3_600_000   # 1 kWh = 3,600,000 J
+YEAR      = "2024"
 
-# Columns needed for Option B target
-GHI_COL = "ALLSKY_SFC_SW_DWN"
-SEI_COL = "solar_exposure_index"
-TARGET_COL = "solar_energy_potential"
+# Building feature columns to carry into the integrated dataset
+BUILDING_COLS = [
+    "rooftop_area_sq_m",
+    "orientation_score",
+    "shading_factor",
+    "tilt_factor",
+    "SEI_norm",
+]
 
 
-def integrate_datasets():
-    print("Integrating Datasets (Option B: Solar Energy Potential)...")
+def integrate_datasets() -> None:
+    print("=" * 60)
+    print("Data Integration — Spatial Nearest-Neighbour Join")
+    print("=" * 60)
 
-    nasa_path = os.path.join(PROCESSED_DIR, "nasa_features.csv")
-    osm_path = os.path.join(PROCESSED_DIR, "osm_features.geojson")
+    # ── Load inputs ───────────────────────────────────────────────────────
+    spatial_path = os.path.join(PROCESSED_DIR,
+                                f"baseline_spatial_clean_{YEAR}.csv")
+    osm_path     = os.path.join(PROCESSED_DIR, "osm_features.geojson")
 
-    if not os.path.exists(nasa_path) or not os.path.exists(osm_path):
-        raise FileNotFoundError("Missing feature files. Run feature_engineering.py first.")
+    if not os.path.exists(spatial_path):
+        raise FileNotFoundError(
+            f"Missing: {spatial_path}\n"
+            "Run data_processing.process_baseline_spatial() first."
+        )
+    if not os.path.exists(osm_path):
+        raise FileNotFoundError(
+            f"Missing: {osm_path}\n"
+            "Run feature_engineering.py first."
+        )
 
-    nasa_df = pd.read_csv(nasa_path)
-    osm_gdf = gpd.read_file(osm_path)
+    spatial_df = pd.read_csv(spatial_path)
+    osm_gdf    = gpd.read_file(osm_path)
 
-    # Validate required columns
-    if GHI_COL not in nasa_df.columns:
-        raise ValueError(f"NASA features missing required column: {GHI_COL}")
-    if SEI_COL not in osm_gdf.columns:
-        raise ValueError(f"OSM features missing required column: {SEI_COL}")
+    target_col = f"GHI_mean_{YEAR}"
+    if target_col not in spatial_df.columns:
+        raise ValueError(f"Column '{target_col}' not found in {spatial_path}.")
 
-    # Sample buildings for feasibility
-    if len(osm_gdf) > BUILDING_SAMPLE_SIZE:
-        osm_sample = osm_gdf.sample(BUILDING_SAMPLE_SIZE, random_state=42).reset_index(drop=True)
-    else:
-        osm_sample = osm_gdf.reset_index(drop=True)
+    print(f"[Integration] Spatial points : {len(spatial_df):,}")
+    print(f"[Integration] OSM buildings  : {len(osm_gdf):,}")
 
-    # Cross Join: Repeat NASA daily data for every building
-    nasa_expanded = nasa_df.loc[nasa_df.index.repeat(len(osm_sample))].reset_index(drop=True)
-    osm_expanded = pd.concat([osm_sample] * len(nasa_df), ignore_index=True)
+    # ── Validate / recompute building features ────────────────────────────
+    missing_cols = [c for c in BUILDING_COLS if c not in osm_gdf.columns]
+    if missing_cols:
+        print(f"[Integration] Missing OSM columns: {missing_cols} — "
+              "re-running feature engineering …")
+        from feature_engineering import topo_features, normalize_sei
+        osm_gdf = topo_features(osm_gdf)
+        osm_gdf = normalize_sei(osm_gdf)
 
-    # Concatenate (drop geometry)
-    integrated_df = pd.concat([nasa_expanded, osm_expanded.drop(columns="geometry")], axis=1)
+    # ── Project OSM to WGS84 for coordinate matching ─────────────────────
+    if osm_gdf.crs and osm_gdf.crs.to_epsg() != 4326:
+        osm_gdf = osm_gdf.to_crs("EPSG:4326")
 
-    # Make sure numeric
-    integrated_df[GHI_COL] = pd.to_numeric(integrated_df[GHI_COL], errors="coerce")
-    integrated_df[SEI_COL] = pd.to_numeric(integrated_df[SEI_COL], errors="coerce")
+    # ── Build cKDTree on OSM building centroids ───────────────────────────
+    centroids     = osm_gdf.geometry.centroid
+    osm_coords    = np.column_stack([centroids.y, centroids.x])  # lat, lon
+    tree          = cKDTree(osm_coords)
 
-    # Option B Target: Solar Energy Potential
-    integrated_df[TARGET_COL] = integrated_df[GHI_COL] * integrated_df[SEI_COL]
+    # ── Query: for each spatial point find its nearest building ──────────
+    query_coords  = spatial_df[["lat", "lon"]].values
+    distances, idx = tree.query(query_coords, k=1)
 
-    # Clean any NaNs created during coercion
-    integrated_df = integrated_df.replace([np.inf, -np.inf], np.nan)
-    integrated_df = integrated_df.ffill().bfill()
+    print(f"[Integration] Nearest-neighbour matching done.")
+    print(f"  Max distance to nearest building : {distances.max()*111:.2f} km")
+    print(f"  Mean distance                    : {distances.mean()*111:.3f} km")
 
-    output_path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
-    integrated_df.to_csv(output_path, index=False)
+    # ── Attach building features to each spatial point ────────────────────
+    matched_bldg = osm_gdf.iloc[idx][BUILDING_COLS].reset_index(drop=True)
+    integrated   = pd.concat(
+        [spatial_df.reset_index(drop=True), matched_bldg],
+        axis=1,
+    )
 
-    print(f"Integration Complete.")
-    print(f"Saved: {output_path}")
-    print(f"Rows: {len(integrated_df)}")
-    print(f"Target created: {TARGET_COL} = {GHI_COL} * {SEI_COL}")
+    # ── Convert GHI_mean: kWh/m²/day → J/m²/day ─────────────────────────
+    integrated["GHI_mean_J"] = integrated[target_col] * KWH_TO_J
+
+    # ── Drop rows with any NaN in critical columns ────────────────────────
+    critical = ["lat", "lon", target_col, "GHI_mean_J"] + BUILDING_COLS
+    n_before = len(integrated)
+    integrated = (integrated
+                  .dropna(subset=critical)
+                  .reset_index(drop=True))
+    n_dropped = n_before - len(integrated)
+    if n_dropped:
+        print(f"[Integration] Dropped {n_dropped} rows with NaN values.")
+
+    # ── Select and order final columns ────────────────────────────────────
+    final_cols = ["lat", "lon", target_col, "GHI_mean_J"] + BUILDING_COLS
+    integrated = integrated[final_cols]
+
+    # ── Save ──────────────────────────────────────────────────────────────
+    out_path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
+    integrated.to_csv(out_path, index=False)
+
+    print(f"\n[Integration] integrated_dataset.csv")
+    print(f"  Rows    : {len(integrated):,}")
+    print(f"  Columns : {list(integrated.columns)}")
+    print(f"  Target  : GHI_mean_J (J/m²/day)  ←  used for RMSE/MAE")
+    print(f"  Target  : {target_col} (kWh/m²/day) ←  kept for reference")
+    print(f"\n  Target statistics:")
+    print(f"    kWh/m²/day : mean={integrated[target_col].mean():.4f}  "
+          f"std={integrated[target_col].std():.4f}")
+    print(f"    J/m²/day   : mean={integrated['GHI_mean_J'].mean():,.0f}  "
+          f"std={integrated['GHI_mean_J'].std():,.0f}")
+    print(f"\n  Saved → {out_path}")
+    print("\n[Integration] Complete. Next → model_training.py")
 
 
 if __name__ == "__main__":
