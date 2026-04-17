@@ -194,6 +194,14 @@ class ModelContext:
     def _target_j(self, df: pd.DataFrame) -> np.ndarray:
         return df[TARGET_J].values.astype(float)
 
+    def _effective_target_j(self, df: pd.DataFrame) -> np.ndarray:
+        """Target_Effective_J = GHI_mean_J * safe_shade * safe_orient (same as model_training2.py)."""
+        s_min, s_max = df["shading_factor"].min(), df["shading_factor"].max()
+        o_min, o_max = df["orientation_score"].min(), df["orientation_score"].max()
+        safe_shade  = 0.85 + 0.15 * ((df["shading_factor"]  - s_min) / (s_max - s_min + 1e-9))
+        safe_orient = 0.85 + 0.15 * ((df["orientation_score"] - o_min) / (o_max - o_min + 1e-9))
+        return (df[TARGET_J] * safe_shade * safe_orient).values.astype(float)
+
     # ── Model loading / training ──────────────────────────────────────────
 
     def _load_model_file(self, model_path: Path) -> object | None:
@@ -223,7 +231,7 @@ class ModelContext:
     def _train_fi_model(self) -> FIAdaBoostRegressor:
         assert self.df is not None
         X = self.df[FI_FEATURES].values.astype(float)
-        y = self._target_j(self.df)
+        y = self._effective_target_j(self.df)
         model = FIAdaBoostRegressor()
         model.fit(X, y)
         return model
@@ -309,8 +317,8 @@ class ModelContext:
 
         X_fi_test = test_df[FI_FEATURES].values.astype(float)
         X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-        y_fi_test = self._target_j(test_df)
         y_base_test = self._target_j(test_df)
+        y_fi_test = self._effective_target_j(test_df)
 
         baseline_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float)
         fi_pred = np.asarray(self.fi_model.predict(X_fi_test), dtype=float)
@@ -341,9 +349,12 @@ class ModelContext:
         baseline_counts, _ = np.histogram(baseline_residuals, bins=edges)
         fi_counts, _ = np.histogram(fi_residuals, bins=edges)
 
+        # Pick decimal places based on the range so labels are readable
+        span = max_edge - min_edge
+        fmt = ".3f" if span < 1 else ".1f"
         return [
             ErrorDistributionBin(
-                bucket=f"{edges[i]:.0f} to {edges[i + 1]:.0f}",
+                bucket=f"{edges[i]:{fmt}} to {edges[i + 1]:{fmt}}",
                 baseline=int(baseline_counts[i]),
                 fiAdaBoost=int(fi_counts[i]),
             )
@@ -362,12 +373,12 @@ class ModelContext:
 
         X_fi_test = test_df[FI_FEATURES].values.astype(float)
         X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-        y_fi_test = self._target_j(test_df)
         y_base_test = self._target_j(test_df)
+        y_fi_test = self._effective_target_j(test_df)
 
-        # Use the same target scale (kWh/m²/day) for display
-        y_fi_kwh = y_fi_test / KWH_TO_J
+        # Convert to kWh/m²/day for display
         y_base_kwh = y_base_test / KWH_TO_J
+        y_fi_kwh = y_fi_test / KWH_TO_J
 
         baseline_pred_kwh = np.asarray(self.baseline_model.predict(X_base_test), dtype=float) / KWH_TO_J
         fi_pred_kwh = np.asarray(self.fi_model.predict(X_fi_test), dtype=float) / KWH_TO_J

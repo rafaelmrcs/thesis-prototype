@@ -205,7 +205,7 @@ export function GlobalModelAnalytics() {
                         <XAxis dataKey="metric" stroke="#64748b" />
                         <YAxis
                           stroke="#64748b"
-                          domain={[85, 100]}
+                          domain={([dataMin]: [number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
                           tickFormatter={(v: number) => `${v}%`}
                         />
                         <Tooltip formatter={(v: number | string) => `${Number(v).toFixed(2)}%`} />
