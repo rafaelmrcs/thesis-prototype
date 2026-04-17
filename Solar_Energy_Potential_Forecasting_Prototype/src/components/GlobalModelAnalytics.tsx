@@ -205,7 +205,7 @@ export function GlobalModelAnalytics() {
                         <XAxis dataKey="metric" stroke="#64748b" />
                         <YAxis
                           stroke="#64748b"
-                          domain={([dataMin]: [number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
+                          domain={([dataMin]: [number, number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
                           tickFormatter={(v: number) => `${v}%`}
                         />
                         <Tooltip formatter={(v: number | string) => `${Number(v).toFixed(2)}%`} />
@@ -223,24 +223,24 @@ export function GlobalModelAnalytics() {
                 <h3 className="mb-4 text-lg font-semibold">B. Improvement Cards</h3>
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <ImprovementCard
-                    label="RMSE reduced by"
-                    value={`${mc.rmseImprovementPct.toFixed(1)}%`}
+                    label={mc.rmseImprovementPct >= 0 ? 'RMSE reduced by' : 'RMSE increased by'}
+                    value={`${Math.abs(mc.rmseImprovementPct).toFixed(1)}%`}
                     sub="Lower root-mean-square error"
-                    positive
+                    positive={mc.rmseImprovementPct >= 0}
                     icon={<TrendingDown className="h-4 w-4" />}
                   />
                   <ImprovementCard
-                    label="MAE reduced by"
-                    value={`${mc.maeImprovementPct.toFixed(1)}%`}
+                    label={mc.maeImprovementPct >= 0 ? 'MAE reduced by' : 'MAE increased by'}
+                    value={`${Math.abs(mc.maeImprovementPct).toFixed(1)}%`}
                     sub="Lower mean absolute error"
-                    positive
+                    positive={mc.maeImprovementPct >= 0}
                     icon={<TrendingDown className="h-4 w-4" />}
                   />
                   <ImprovementCard
-                    label="R² increased by"
-                    value={`${mc.r2ImprovementPct.toFixed(2)}%`}
+                    label={mc.r2ImprovementPct >= 0 ? 'R² increased by' : 'R² decreased by'}
+                    value={`${Math.abs(mc.r2ImprovementPct).toFixed(2)}%`}
                     sub="Higher explained variance"
-                    positive
+                    positive={mc.r2ImprovementPct >= 0}
                     icon={<TrendingUp className="h-4 w-4" />}
                   />
                 </div>
@@ -262,21 +262,33 @@ export function GlobalModelAnalytics() {
                     <tbody>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">RMSE</td>
-                        <td className="px-4 py-3 text-right">{mc.baseline.rmse.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-emerald-700">{mc.fiAdaBoost.rmse.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right text-emerald-700">↓ {mc.rmseImprovementPct.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-right">{mc.baseline.rmse.toFixed(5)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold ${mc.rmseImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {mc.fiAdaBoost.rmse.toFixed(5)}
+                        </td>
+                        <td className={`px-4 py-3 text-right ${mc.rmseImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {mc.rmseImprovementPct >= 0 ? '↓' : '↑'} {Math.abs(mc.rmseImprovementPct).toFixed(1)}%
+                        </td>
                       </tr>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">MAE</td>
-                        <td className="px-4 py-3 text-right">{mc.baseline.mae.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-emerald-700">{mc.fiAdaBoost.mae.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right text-emerald-700">↓ {mc.maeImprovementPct.toFixed(1)}%</td>
+                        <td className="px-4 py-3 text-right">{mc.baseline.mae.toFixed(5)}</td>
+                        <td className={`px-4 py-3 text-right font-semibold ${mc.maeImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {mc.fiAdaBoost.mae.toFixed(5)}
+                        </td>
+                        <td className={`px-4 py-3 text-right ${mc.maeImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
+                          {mc.maeImprovementPct >= 0 ? '↓' : '↑'} {Math.abs(mc.maeImprovementPct).toFixed(1)}%
+                        </td>
                       </tr>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">R²</td>
                         <td className="px-4 py-3 text-right">{(mc.baseline.r2 * 100).toFixed(2)}%</td>
-                        <td className="px-4 py-3 text-right font-semibold text-sky-700">{(mc.fiAdaBoost.r2 * 100).toFixed(2)}%</td>
-                        <td className="px-4 py-3 text-right text-sky-700">↑ {mc.r2ImprovementPct.toFixed(2)}%</td>
+                        <td className={`px-4 py-3 text-right font-semibold ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
+                          {(mc.fiAdaBoost.r2 * 100).toFixed(2)}%
+                        </td>
+                        <td className={`px-4 py-3 text-right ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
+                          {mc.r2ImprovementPct >= 0 ? '↑' : '↓'} {Math.abs(mc.r2ImprovementPct).toFixed(2)}%
+                        </td>
                       </tr>
                     </tbody>
                   </table>
@@ -374,7 +386,7 @@ export function GlobalModelAnalytics() {
           <section>
             <h3 className="mb-1 text-lg font-semibold">C. Cross-validation Fold Chart</h3>
             <p className="mb-4 text-sm text-slate-500">
-              RMSE per fold (5-fold time-series split). FI-AdaBoost should consistently track below Baseline.
+              RMSE per saved fold when available. If no CV artifact exists, this section falls back to the saved test summary from the latest results export.
             </p>
             {cvChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={320}>

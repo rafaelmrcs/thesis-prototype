@@ -25,16 +25,22 @@ from src.model_training2 import (
 
 ROOT_DIR = Path(__file__).resolve().parent.parent
 MODEL_DIR = ROOT_DIR / "models"
+RESULTS_DIR = ROOT_DIR / "results"
 INTEGRATED_DATA_FILE = ROOT_DIR / "data" / "processed" / "integrated_dataset.csv"
 CV_METRICS_FILE = MODEL_DIR / "cv_fold_metrics.csv"
 FI_MODEL_FILE = MODEL_DIR / "fi_adaboost.pkl"
 BASELINE_MODEL_FILE = MODEL_DIR / "baseline_adaboost.pkl"
+TABLE1_FILE = RESULTS_DIR / "table1_training.csv"
+TABLE2_FILE = RESULTS_DIR / "table2_test.csv"
+ADA_FORECAST_FILE = RESULTS_DIR / "ada_solar_forecast.csv"
+FI_FORECAST_FILE = RESULTS_DIR / "fi_solar_forecast.csv"
 
 # Must match model_training2.py exactly
 KWH_TO_J = 3_600_000
 RANDOM_SEED = 42
 
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
+RESULTS_DIR.mkdir(parents=True, exist_ok=True)
 
 
 class PredictRequest(BaseModel):
@@ -151,6 +157,10 @@ class ModelContext:
         self.cv_fold_metrics: list[CVFoldMetrics] = []
         self.average_cv_metrics: dict[str, dict[str, float]] = {}
         self.training_analytics: TrainingAnalyticsResponse | None = None
+        self.training_table: pd.DataFrame | None = None
+        self.test_table: pd.DataFrame | None = None
+        self.ada_forecast_df: pd.DataFrame | None = None
+        self.fi_forecast_df: pd.DataFrame | None = None
 
     # ── Dataset ───────────────────────────────────────────────────────────
 
@@ -171,6 +181,48 @@ class ModelContext:
 
         df = df.dropna(subset=required).reset_index(drop=True)
         return df
+
+    def _load_result_artifacts(self) -> None:
+        self.training_table = pd.read_csv(TABLE1_FILE) if TABLE1_FILE.exists() else None
+        self.test_table = pd.read_csv(TABLE2_FILE) if TABLE2_FILE.exists() else None
+        self.ada_forecast_df = pd.read_csv(ADA_FORECAST_FILE) if ADA_FORECAST_FILE.exists() else None
+        self.fi_forecast_df = pd.read_csv(FI_FORECAST_FILE) if FI_FORECAST_FILE.exists() else None
+
+    @staticmethod
+    def _metric_row(table: pd.DataFrame | None, model_name: str) -> pd.Series | None:
+        if table is None or "Model" not in table.columns:
+            return None
+        rows = table.loc[table["Model"].astype(str).str.contains(model_name, case=False, na=False)]
+        if rows.empty:
+            return None
+        return rows.iloc[0]
+
+    @staticmethod
+    def _to_float(value: object, default: float = 0.0) -> float:
+        try:
+            return float(value)
+        except (TypeError, ValueError):
+            return default
+
+    def _load_metrics_from_results(self) -> bool:
+        baseline_row = self._metric_row(self.test_table, "Baseline")
+        fi_row = self._metric_row(self.test_table, "FI-AdaBoost")
+        if baseline_row is None or fi_row is None:
+            return False
+
+        self.performance_metrics = {
+            "baseline": {
+                "rmse": self._to_float(baseline_row.get("RMSE (kWh/m²/day)")),
+                "mae": self._to_float(baseline_row.get("MAE  (kWh/m²/day)")),
+                "r2": self._to_float(baseline_row.get("R²")),
+            },
+            "fiAdaBoost": {
+                "rmse": self._to_float(fi_row.get("RMSE (kWh/m²/day)")),
+                "mae": self._to_float(fi_row.get("MAE  (kWh/m²/day)")),
+                "r2": self._to_float(fi_row.get("R²")),
+            },
+        }
+        return True
 
     def _build_kd_tree(self) -> None:
         assert self.df is not None
@@ -313,20 +365,28 @@ class ModelContext:
     def _compute_global_analytics(self) -> None:
         assert self.df is not None and self.fi_model is not None and self.baseline_model is not None
 
-        test_df = self._analytics_test_df()
+        # Prefer persisted evaluation metrics from results artifacts so frontend and reports stay consistent.
+        loaded_from_results = self._load_metrics_from_results()
 
-        X_fi_test = test_df[FI_FEATURES].values.astype(float)
-        X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-        y_base_test = self._target_j(test_df)
-        y_fi_test = self._effective_target_j(test_df)
+        if not loaded_from_results:
+            test_df = self._analytics_test_df()
 
-        baseline_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float)
-        fi_pred = np.asarray(self.fi_model.predict(X_fi_test), dtype=float)
+            X_fi_test = test_df[FI_FEATURES].values.astype(float)
+            X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
+            y_base_test = self._target_j(test_df)
+            y_fi_test = self._effective_target_j(test_df)
 
-        self.performance_metrics = {
-            "baseline": self._evaluate_metrics(y_base_test, baseline_pred),
-            "fiAdaBoost": self._evaluate_metrics(y_fi_test, fi_pred),
-        }
+            baseline_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float)
+            fi_pred = np.asarray(self.fi_model.predict(X_fi_test), dtype=float)
+
+            # Convert fallback metrics to kWh/m²/day for UI consistency.
+            base_metrics = self._evaluate_metrics(y_base_test / KWH_TO_J, baseline_pred / KWH_TO_J)
+            fi_metrics = self._evaluate_metrics(y_fi_test / KWH_TO_J, fi_pred / KWH_TO_J)
+            self.performance_metrics = {
+                "baseline": base_metrics,
+                "fiAdaBoost": fi_metrics,
+            }
+
         self.feature_importance_ranking = self._compute_feature_importance_ranking()
 
     def _build_error_distribution(
@@ -366,60 +426,97 @@ class ModelContext:
         if self.df is None or self.fi_model is None or self.baseline_model is None:
             return
 
-        if len(self.df) < 2:
-            return
+        baseline_metrics = self.performance_metrics.get("baseline", {"rmse": 0.0, "mae": 0.0, "r2": 0.0})
+        fi_metrics = self.performance_metrics.get("fiAdaBoost", {"rmse": 0.0, "mae": 0.0, "r2": 0.0})
 
-        test_df = self._analytics_test_df()
+        if self.ada_forecast_df is not None and self.fi_forecast_df is not None:
+            ada_df = self.ada_forecast_df.copy()
+            fi_df = self.fi_forecast_df.copy()
 
-        X_fi_test = test_df[FI_FEATURES].values.astype(float)
-        X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-        y_base_test = self._target_j(test_df)
-        y_fi_test = self._effective_target_j(test_df)
+            if "GHI_mean_2024" not in ada_df.columns or "predicted_GHI_kWh" not in ada_df.columns:
+                return
 
-        # Convert to kWh/m²/day for display
-        y_base_kwh = y_base_test / KWH_TO_J
-        y_fi_kwh = y_fi_test / KWH_TO_J
+            base_actual = ada_df["GHI_mean_2024"].astype(float).to_numpy()
+            base_pred = ada_df["predicted_GHI_kWh"].astype(float).to_numpy()
+            fi_actual = fi_df["GHI_mean_2024"].astype(float).to_numpy()
+            fi_pred = fi_df["predicted_GHI_kWh"].astype(float).to_numpy()
 
-        baseline_pred_kwh = np.asarray(self.baseline_model.predict(X_base_test), dtype=float) / KWH_TO_J
-        fi_pred_kwh = np.asarray(self.fi_model.predict(X_fi_test), dtype=float) / KWH_TO_J
+            sample_size = min(220, len(ada_df), len(fi_df))
+            sample_idx = np.unique(np.linspace(0, sample_size - 1, num=sample_size, dtype=int))
+            date_labels = [str(i) for i in sample_idx]
 
-        baseline_metrics = self._evaluate_metrics(y_base_kwh, baseline_pred_kwh)
-        fi_metrics = self._evaluate_metrics(y_fi_kwh, fi_pred_kwh)
-        self.performance_metrics = {
-            "baseline": baseline_metrics,
-            "fiAdaBoost": fi_metrics,
-        }
+            actual_base_sample = base_actual[sample_idx]
+            base_pred_sample = base_pred[sample_idx]
+            actual_fi_sample = fi_actual[sample_idx]
+            fi_pred_sample = fi_pred[sample_idx]
 
-        sample_size = min(220, len(test_df))
-        sample_idx = np.unique(np.linspace(0, len(test_df) - 1, num=sample_size, dtype=int))
+            all_vals = np.concatenate([actual_base_sample, actual_fi_sample, base_pred_sample, fi_pred_sample])
+            domain_min = float(np.min(all_vals))
+            domain_max = float(np.max(all_vals))
 
-        actual_base_sample = y_base_kwh[sample_idx]
-        actual_fi_sample = y_fi_kwh[sample_idx]
-        base_pred_sample = baseline_pred_kwh[sample_idx]
-        fi_pred_sample = fi_pred_kwh[sample_idx]
+            predicted_vs_actual = PredictedVsActualData(
+                baseline=[
+                    PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                    for a, p, d in zip(actual_base_sample, base_pred_sample, date_labels)
+                ],
+                fiAdaBoost=[
+                    PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                    for a, p, d in zip(actual_fi_sample, fi_pred_sample, date_labels)
+                ],
+                domainMin=domain_min,
+                domainMax=domain_max,
+            )
 
-        # Use index as a stand-in date label (no date column in integrated_dataset)
-        date_labels = [str(test_df.index[i]) for i in sample_idx]
+            baseline_residuals = base_pred - base_actual
+            fi_residuals = fi_pred - fi_actual
+        else:
+            if len(self.df) < 2:
+                return
 
-        all_vals = np.concatenate([actual_base_sample, actual_fi_sample, base_pred_sample, fi_pred_sample])
-        domain_min = float(np.min(all_vals))
-        domain_max = float(np.max(all_vals))
+            # Fallback: compute analytics directly from held-out split if saved result files are missing.
+            test_df = self._analytics_test_df()
+            X_fi_test = test_df[FI_FEATURES].values.astype(float)
+            X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
+            y_base_kwh = self._target_j(test_df) / KWH_TO_J
+            y_fi_kwh = self._effective_target_j(test_df) / KWH_TO_J
+            base_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float) / KWH_TO_J
+            fi_pred = np.asarray(self.fi_model.predict(X_fi_test), dtype=float) / KWH_TO_J
 
-        predicted_vs_actual = PredictedVsActualData(
-            baseline=[
-                PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
-                for a, p, d in zip(actual_base_sample, base_pred_sample, date_labels)
-            ],
-            fiAdaBoost=[
-                PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
-                for a, p, d in zip(actual_fi_sample, fi_pred_sample, date_labels)
-            ],
-            domainMin=domain_min,
-            domainMax=domain_max,
-        )
+            sample_size = min(220, len(test_df))
+            sample_idx = np.unique(np.linspace(0, len(test_df) - 1, num=sample_size, dtype=int))
+            date_labels = [str(test_df.index[i]) for i in sample_idx]
 
-        baseline_residuals = baseline_pred_kwh - y_base_kwh
-        fi_residuals = fi_pred_kwh - y_fi_kwh
+            actual_base_sample = y_base_kwh[sample_idx]
+            base_pred_sample = base_pred[sample_idx]
+            actual_fi_sample = y_fi_kwh[sample_idx]
+            fi_pred_sample = fi_pred[sample_idx]
+
+            all_vals = np.concatenate([actual_base_sample, actual_fi_sample, base_pred_sample, fi_pred_sample])
+            domain_min = float(np.min(all_vals))
+            domain_max = float(np.max(all_vals))
+
+            predicted_vs_actual = PredictedVsActualData(
+                baseline=[
+                    PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                    for a, p, d in zip(actual_base_sample, base_pred_sample, date_labels)
+                ],
+                fiAdaBoost=[
+                    PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
+                    for a, p, d in zip(actual_fi_sample, fi_pred_sample, date_labels)
+                ],
+                domainMin=domain_min,
+                domainMax=domain_max,
+            )
+
+            baseline_residuals = base_pred - y_base_kwh
+            fi_residuals = fi_pred - y_fi_kwh
+
+            baseline_metrics = self._evaluate_metrics(y_base_kwh, base_pred)
+            fi_metrics = self._evaluate_metrics(y_fi_kwh, fi_pred)
+            self.performance_metrics = {
+                "baseline": baseline_metrics,
+                "fiAdaBoost": fi_metrics,
+            }
 
         self.training_analytics = TrainingAnalyticsResponse(
             performanceMetricsComparison={
@@ -438,51 +535,71 @@ class ModelContext:
             predictedVsActual=predicted_vs_actual,
             errorDistribution=self._build_error_distribution(baseline_residuals, fi_residuals),
             residualSummary={
-                "baselineStd": float(np.std(baseline_residuals, ddof=1)),
-                "fiStd": float(np.std(fi_residuals, ddof=1)),
+                "baselineStd": float(np.std(baseline_residuals, ddof=1)) if len(baseline_residuals) > 1 else 0.0,
+                "fiStd": float(np.std(fi_residuals, ddof=1)) if len(fi_residuals) > 1 else 0.0,
                 "baselineMae": float(np.mean(np.abs(baseline_residuals))),
                 "fiMae": float(np.mean(np.abs(fi_residuals))),
             },
         )
 
     def _load_cv_metrics(self) -> None:
-        if not CV_METRICS_FILE.exists():
-            return
-        try:
-            df = pd.read_csv(CV_METRICS_FILE)
-            self.cv_fold_metrics = []
-            for _, row in df.iterrows():
-                self.cv_fold_metrics.append(
-                    CVFoldMetrics(
-                        fold=int(row["fold"]),
-                        baseline_rmse=float(row["baseline_RMSE"]),
-                        baseline_mae=float(row["baseline_MAE"]),
-                        baseline_r2=float(row["baseline_R2"]),
-                        fi_rmse=float(row["fi_RMSE"]),
-                        fi_mae=float(row["fi_MAE"]),
-                        fi_r2=float(row["fi_R2"]),
+        self.cv_fold_metrics = []
+        self.average_cv_metrics = {}
+
+        if CV_METRICS_FILE.exists():
+            try:
+                df = pd.read_csv(CV_METRICS_FILE)
+                for _, row in df.iterrows():
+                    self.cv_fold_metrics.append(
+                        CVFoldMetrics(
+                            fold=int(row["fold"]),
+                            baseline_rmse=float(row["baseline_RMSE"]),
+                            baseline_mae=float(row["baseline_MAE"]),
+                            baseline_r2=float(row["baseline_R2"]),
+                            fi_rmse=float(row["fi_RMSE"]),
+                            fi_mae=float(row["fi_MAE"]),
+                            fi_r2=float(row["fi_R2"]),
+                        )
                     )
-                )
-            if self.cv_fold_metrics:
-                self.average_cv_metrics = {
-                    "baseline": {
-                        "rmse": float(np.mean([m.baseline_rmse for m in self.cv_fold_metrics])),
-                        "mae": float(np.mean([m.baseline_mae for m in self.cv_fold_metrics])),
-                        "r2": float(np.mean([m.baseline_r2 for m in self.cv_fold_metrics])),
-                    },
-                    "fiAdaBoost": {
-                        "rmse": float(np.mean([m.fi_rmse for m in self.cv_fold_metrics])),
-                        "mae": float(np.mean([m.fi_mae for m in self.cv_fold_metrics])),
-                        "r2": float(np.mean([m.fi_r2 for m in self.cv_fold_metrics])),
-                    },
-                }
-        except Exception as exc:
-            print(f"Warning: Failed to load CV metrics: {exc}")
+            except Exception as exc:
+                print(f"Warning: Failed to load CV metrics file: {exc}")
+
+        # Fallback to saved test table when explicit CV file is unavailable.
+        if not self.cv_fold_metrics:
+            baseline_row = self._metric_row(self.test_table, "Baseline")
+            fi_row = self._metric_row(self.test_table, "FI-AdaBoost")
+            if baseline_row is not None and fi_row is not None:
+                self.cv_fold_metrics = [
+                    CVFoldMetrics(
+                        fold=1,
+                        baseline_rmse=self._to_float(baseline_row.get("RMSE (J/m²/day)")),
+                        baseline_mae=self._to_float(baseline_row.get("MAE  (J/m²/day)")),
+                        baseline_r2=self._to_float(baseline_row.get("R²")),
+                        fi_rmse=self._to_float(fi_row.get("RMSE (J/m²/day)")),
+                        fi_mae=self._to_float(fi_row.get("MAE  (J/m²/day)")),
+                        fi_r2=self._to_float(fi_row.get("R²")),
+                    )
+                ]
+
+        if self.cv_fold_metrics:
+            self.average_cv_metrics = {
+                "baseline": {
+                    "rmse": float(np.mean([m.baseline_rmse for m in self.cv_fold_metrics])),
+                    "mae": float(np.mean([m.baseline_mae for m in self.cv_fold_metrics])),
+                    "r2": float(np.mean([m.baseline_r2 for m in self.cv_fold_metrics])),
+                },
+                "fiAdaBoost": {
+                    "rmse": float(np.mean([m.fi_rmse for m in self.cv_fold_metrics])),
+                    "mae": float(np.mean([m.fi_mae for m in self.cv_fold_metrics])),
+                    "r2": float(np.mean([m.fi_r2 for m in self.cv_fold_metrics])),
+                },
+            }
 
     # ── Startup ───────────────────────────────────────────────────────────
 
     def ensure_loaded(self) -> None:
         self.df = self._load_dataset()
+        self._load_result_artifacts()
         self._build_kd_tree()
 
         # Try loading canonical persisted models; fall back to training fresh.

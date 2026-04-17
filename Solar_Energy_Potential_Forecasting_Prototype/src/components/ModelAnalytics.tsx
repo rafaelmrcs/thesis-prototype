@@ -30,6 +30,13 @@ interface ComparisonData {
     solarPotentialImprovementPct: number;
     confidenceLevel: number;
   };
+  performanceMetricsComparison?: {
+    baseline: { rmse: number; mae: number; r2: number };
+    fiAdaBoost: { rmse: number; mae: number; r2: number };
+    rmseImprovementPct: number;
+    maeImprovementPct: number;
+    r2ImprovementPct: number;
+  };
 }
 
 export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsProps) {
@@ -119,13 +126,36 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                 </div>
               </div>
 
-              {/* <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
+              <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
                 <p className="text-xs text-slate-500 uppercase tracking-wide">Prediction Confidence</p>
                 <p className="mt-1 text-3xl font-semibold text-sky-700">
                   {liveComparison.improvement.confidenceLevel.toFixed(1)}%
                 </p>
                 <p className="text-xs text-slate-400">Based on proximity to training data and model agreement</p>
-              </div> */}
+              </div>
+
+              {liveComparison.performanceMetricsComparison && (
+                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Saved Test Metrics (from results/table2_test.csv)</p>
+                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
+                    <div>
+                      <p className="text-xs text-slate-500">RMSE (kWh/m²/day)</p>
+                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.rmse.toFixed(5)}</p>
+                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.rmse.toFixed(5)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">MAE (kWh/m²/day)</p>
+                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.mae.toFixed(5)}</p>
+                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.mae.toFixed(5)}</p>
+                    </div>
+                    <div>
+                      <p className="text-xs text-slate-500">R²</p>
+                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.r2.toFixed(4)}</p>
+                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.r2.toFixed(4)}</p>
+                    </div>
+                  </div>
+                </div>
+              )}
             </>
           ) : (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-sm text-slate-500">

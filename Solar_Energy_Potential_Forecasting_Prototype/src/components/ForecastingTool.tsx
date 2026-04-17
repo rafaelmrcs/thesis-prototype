@@ -64,6 +64,12 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
 
+  const panelEff = 0.192;
+  const performanceRatio = 0.78;
+  const annualEnergyEstimate = prediction
+    ? prediction.rooftopArea * panelEff * prediction.solarPotential * 365 * performanceRatio
+    : null;
+
   // Clear prediction when coordinates change
   useEffect(() => {
     if (coordinates.lat || coordinates.lng) {
@@ -416,7 +422,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <div>
                   <CardTitle className="text-2xl">Predicted Solar Energy Potential</CardTitle>
                   <CardDescription className="text-sm">
-                    Powered by FI-AdaBoost Regression Model
+                    Powered by the saved FI-AdaBoost model artifact and nearest rooftop features
                   </CardDescription>
                 </div>
                 <div className={`w-16 h-16 bg-gradient-to-br ${getSolarRating(prediction.solarPotential).bgGradient} rounded-full flex items-center justify-center shadow-lg`}>
@@ -457,6 +463,20 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                     <strong className="text-gray-900">What this means:</strong> {getSolarRating(prediction.solarPotential).description}
                   </p>
                 </div>
+
+                {annualEnergyEstimate !== null && (
+                  <div className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Estimated Output (using saved model + Equation 5)</p>
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                      <p className="text-sm text-slate-700">
+                        Annual: <span className="font-semibold">{annualEnergyEstimate.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
+                      </p>
+                      <p className="text-sm text-slate-700">
+                        Monthly: <span className="font-semibold">{(annualEnergyEstimate / 12).toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/month</span>
+                      </p>
+                    </div>
+                  </div>
+                )}
               </div>
             </CardContent>
           </Card>

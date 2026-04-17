@@ -21,6 +21,7 @@ import math
 import warnings
 warnings.filterwarnings("ignore")
 
+import joblib
 import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
@@ -35,7 +36,12 @@ from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
 ROOT_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 PROCESSED_DIR = os.path.join(ROOT_DIR, "data", "processed")
 RESULTS_DIR   = os.path.join(ROOT_DIR, "results")
+MODEL_DIR     = os.path.join(ROOT_DIR, "models")
 os.makedirs(RESULTS_DIR, exist_ok=True)
+os.makedirs(MODEL_DIR, exist_ok=True)
+
+BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_adaboost.pkl")
+FI_MODEL_FILE       = os.path.join(MODEL_DIR, "fi_adaboost.pkl")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RANDOM_SEED   = 42
@@ -302,7 +308,13 @@ def main():
         print(f"  Total Potential (Baseline Theoretical): {ada_fcast['ada_solar_kWh_yr'].sum()/1e6:>8.2f} GWh/year")
         print(f"  Total Potential (FI-AdaBoost Effective): {fi_fcast['fi_solar_kWh_yr'].sum()/1e6:>8.2f} GWh/year")
 
+    # Persist trained models for API usage and reuse.
+    joblib.dump(ada, BASELINE_MODEL_FILE)
+    joblib.dump(fi, FI_MODEL_FILE)
+
     plot_standalone_feature_importance(fi.feature_importances_, FI_FEATURES)
+    print(f"  Saved model  : {BASELINE_MODEL_FILE}")
+    print(f"  Saved model  : {FI_MODEL_FILE}")
     print("\n[Done] Pipeline complete. Check 'results' folder for the Feature Importance Graph!\n")
 
 if __name__ == "__main__":
