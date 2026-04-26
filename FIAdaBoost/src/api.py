@@ -2,11 +2,15 @@ from __future__ import annotations
 
 import __main__
 import os
+import threading
+import time
+from datetime import datetime, timedelta, timezone
 from pathlib import Path
 
 import joblib
 import numpy as np
 import pandas as pd
+import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
 from pydantic import BaseModel, Field
@@ -38,6 +42,19 @@ FI_FORECAST_FILE = RESULTS_DIR / "fi_solar_forecast.csv"
 # Must match model_training2.py exactly
 KWH_TO_J = 3_600_000
 RANDOM_SEED = 42
+
+NASA_POWER_URL = os.getenv(
+    "NASA_POWER_URL",
+    "https://power.larc.nasa.gov/api/temporal/daily/point",
+)
+OVERPASS_API_URL = os.getenv(
+    "OVERPASS_API_URL",
+    "https://overpass-api.de/api/interpreter",
+)
+LIVE_FETCH_TIMEOUT_SECONDS = float(os.getenv("LIVE_FETCH_TIMEOUT_SECONDS", "25"))
+LIVE_FEATURE_CACHE_TTL_SECONDS = int(os.getenv("LIVE_FEATURE_CACHE_TTL_SECONDS", "1800"))
+OVERPASS_RADIUS_METERS = int(os.getenv("OVERPASS_RADIUS_METERS", "150"))
+OVERPASS_SHADE_RADIUS_METERS = float(os.getenv("OVERPASS_SHADE_RADIUS_METERS", "50"))
 
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -152,6 +169,8 @@ class ModelContext:
         self.baseline_model: BaselineAdaBoost | None = None
         self.df: pd.DataFrame | None = None
         self._kd_tree: cKDTree | None = None
+        self._live_cache: dict[str, tuple[float, dict[str, float | str]]] = {}
+        self._live_cache_lock = threading.Lock()
         self.performance_metrics: dict[str, dict[str, float]] = {}
         self.feature_importance_ranking: list[dict[str, str | float | int]] = []
         self.cv_fold_metrics: list[CVFoldMetrics] = []
@@ -670,24 +689,337 @@ def predict_help() -> dict[str, str]:
     }
 
 
-def _get_orientation_and_azimuth(lat: float) -> tuple[str, float]:
-    if lat >= 0:
-        return "South", 180.0
-    return "North", 0.0
+def _cache_key(prefix: str, lat: float, lng: float) -> str:
+    return f"{prefix}:{lat:.5f}:{lng:.5f}"
 
 
-def _derive_conditions(
+def _cache_get(ctx_obj: ModelContext, key: str) -> dict[str, float | str] | None:
+    now = time.time()
+    with ctx_obj._live_cache_lock:
+        item = ctx_obj._live_cache.get(key)
+        if item is None:
+            return None
+        expires_at, payload = item
+        if expires_at < now:
+            ctx_obj._live_cache.pop(key, None)
+            return None
+        return payload
+
+
+def _cache_set(ctx_obj: ModelContext, key: str, payload: dict[str, float | str]) -> None:
+    expires_at = time.time() + LIVE_FEATURE_CACHE_TTL_SECONDS
+    with ctx_obj._live_cache_lock:
+        ctx_obj._live_cache[key] = (expires_at, payload)
+
+
+def _safe_mean(values: dict[str, float] | None) -> float:
+    if values is None:
+        return float("nan")
+    series = pd.to_numeric(pd.Series(values), errors="coerce")
+    series = series[(series > -900)]
+    if series.empty:
+        return float("nan")
+    return float(series.mean())
+
+
+def _haversine_distance_m(lat1: float, lon1: float, lat2: float, lon2: float) -> float:
+    r = 6_371_000.0
+    phi1 = np.radians(lat1)
+    phi2 = np.radians(lat2)
+    d_phi = np.radians(lat2 - lat1)
+    d_lambda = np.radians(lon2 - lon1)
+    a = np.sin(d_phi / 2.0) ** 2 + np.cos(phi1) * np.cos(phi2) * np.sin(d_lambda / 2.0) ** 2
+    return float(2.0 * r * np.arcsin(np.sqrt(a)))
+
+
+def _latlon_to_xy_m(points: list[tuple[float, float]], ref_lat: float) -> list[tuple[float, float]]:
+    r = 6_371_000.0
+    cos_lat = np.cos(np.radians(ref_lat))
+    out: list[tuple[float, float]] = []
+    for lat, lon in points:
+        x = float(np.radians(lon) * r * cos_lat)
+        y = float(np.radians(lat) * r)
+        out.append((x, y))
+    return out
+
+
+def _polygon_area_m2(points: list[tuple[float, float]]) -> float:
+    if len(points) < 3:
+        return 0.0
+
+    if points[0] != points[-1]:
+        ring = points + [points[0]]
+    else:
+        ring = points
+
+    ref_lat = float(np.mean([p[0] for p in ring]))
+    xy = _latlon_to_xy_m(ring, ref_lat)
+    x = np.array([p[0] for p in xy], dtype=float)
+    y = np.array([p[1] for p in xy], dtype=float)
+    area = 0.5 * np.abs(np.dot(x[:-1], y[1:]) - np.dot(y[:-1], x[1:]))
+    return float(area)
+
+
+def _bearing_to_cardinal(azimuth: float) -> str:
+    sectors = ["North", "Northeast", "East", "Southeast", "South", "Southwest", "West", "Northwest"]
+    idx = int(((azimuth + 22.5) % 360) // 45)
+    return sectors[idx]
+
+
+def _derive_weather_fallback(
     solar_potential_kwh: float,
     lat: float,
     lng: float,
-) -> tuple[float, float, float, float, float]:
+) -> dict[str, float]:
     clear_sky_ratio = float(np.clip(solar_potential_kwh / 8.0, 0.25, 0.9))
     sunshine_hours = float(np.clip(3.5 + clear_sky_ratio * 7.0, 3.0, 10.5))
     cloud_cover = float(np.clip((1.0 - clear_sky_ratio) * 100.0, 8.0, 85.0))
     latitude_factor = abs(lat) / 20.0
     temperature = float(np.clip(31.0 - latitude_factor * 8.0 + (clear_sky_ratio - 0.5) * 3.0, 20.0, 36.0))
     humidity = float(np.clip(88.0 - (clear_sky_ratio * 35.0) + (abs(lng) % 1.0) * 8.0, 40.0, 95.0))
-    return clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity
+    return {
+        "clear_sky_ratio": clear_sky_ratio,
+        "sunshine_hours": sunshine_hours,
+        "cloud_cover": cloud_cover,
+        "temperature": temperature,
+        "humidity": humidity,
+    }
+
+
+def _fetch_nasa_weather(lat: float, lng: float) -> dict[str, float]:
+    end_date = datetime.now(timezone.utc).date()
+    start_date = end_date - timedelta(days=45)
+
+    params = {
+        "parameters": "ALLSKY_SFC_SW_DWN,CLRSKY_SFC_SW_DWN,T2M,RH2M",
+        "community": "RE",
+        "latitude": lat,
+        "longitude": lng,
+        "start": start_date.strftime("%Y%m%d"),
+        "end": end_date.strftime("%Y%m%d"),
+        "format": "JSON",
+    }
+
+    response = requests.get(NASA_POWER_URL, params=params, timeout=LIVE_FETCH_TIMEOUT_SECONDS)
+    response.raise_for_status()
+    payload = response.json()
+    parameters = payload["properties"]["parameter"]
+
+    allsky = _safe_mean(parameters.get("ALLSKY_SFC_SW_DWN"))
+    clearsky = _safe_mean(parameters.get("CLRSKY_SFC_SW_DWN"))
+    temperature = _safe_mean(parameters.get("T2M"))
+    humidity = _safe_mean(parameters.get("RH2M"))
+
+    if not np.isfinite(allsky) or not np.isfinite(clearsky) or clearsky <= 0:
+        raise ValueError("NASA POWER response does not contain valid ALLSKY/CLRSKY irradiance values")
+
+    clear_sky_ratio = float(np.clip(allsky / clearsky, 0.05, 1.0))
+    cloud_cover = float(np.clip((1.0 - clear_sky_ratio) * 100.0, 0.0, 100.0))
+    sunshine_hours = float(np.clip(4.0 + (clear_sky_ratio * 8.0), 2.0, 12.0))
+
+    if not np.isfinite(temperature):
+        temperature = 28.0
+    if not np.isfinite(humidity):
+        humidity = 75.0
+
+    return {
+        "clear_sky_ratio": clear_sky_ratio,
+        "sunshine_hours": sunshine_hours,
+        "cloud_cover": cloud_cover,
+        "temperature": float(np.clip(temperature, -20.0, 55.0)),
+        "humidity": float(np.clip(humidity, 0.0, 100.0)),
+    }
+
+
+def _fetch_overpass_geometries(lat: float, lng: float) -> list[list[tuple[float, float]]]:
+    query = f"""
+    [out:json][timeout:25];
+    (
+      way(around:{OVERPASS_RADIUS_METERS},{lat},{lng})[\"building\"];
+      relation(around:{OVERPASS_RADIUS_METERS},{lat},{lng})[\"building\"];
+    );
+    out geom;
+    """.strip()
+
+    response = requests.post(
+        OVERPASS_API_URL,
+        data=query,
+        timeout=LIVE_FETCH_TIMEOUT_SECONDS,
+        headers={"Content-Type": "text/plain"},
+    )
+    response.raise_for_status()
+
+    payload = response.json()
+    elements = payload.get("elements", [])
+    geometries: list[list[tuple[float, float]]] = []
+
+    for element in elements:
+        geometry = element.get("geometry")
+        if not isinstance(geometry, list) or len(geometry) < 3:
+            continue
+
+        points: list[tuple[float, float]] = []
+        for g in geometry:
+            g_lat = g.get("lat")
+            g_lon = g.get("lon")
+            if g_lat is None or g_lon is None:
+                continue
+            points.append((float(g_lat), float(g_lon)))
+
+        if len(points) >= 3:
+            geometries.append(points)
+
+    return geometries
+
+
+def _compute_live_rooftop_features(lat: float, lng: float) -> dict[str, float | str]:
+    geometries = _fetch_overpass_geometries(lat, lng)
+    if not geometries:
+        raise ValueError("No nearby OSM building geometry found")
+
+    buildings: list[dict[str, float | str]] = []
+    centroids: list[tuple[float, float]] = []
+    max_area = 0.0
+
+    for points in geometries:
+        lats = [p[0] for p in points]
+        lons = [p[1] for p in points]
+        centroid_lat = float(np.mean(lats))
+        centroid_lon = float(np.mean(lons))
+        area_m2 = _polygon_area_m2(points)
+        if area_m2 <= 5.0:
+            continue
+
+        max_lat = max(lats)
+        min_lat = min(lats)
+        max_lon = max(lons)
+        min_lon = min(lons)
+
+        meters_per_deg_lat = 111_132.0
+        meters_per_deg_lon = 111_320.0 * np.cos(np.radians(centroid_lat))
+        dx = (max_lon - min_lon) * meters_per_deg_lon
+        dy = (max_lat - min_lat) * meters_per_deg_lat
+        azimuth = float((np.degrees(np.arctan2(dx, dy)) + 360.0) % 360.0)
+
+        orientation_score = float((np.cos(np.radians(azimuth - 180.0)) + 1.0) / 2.0)
+        distance_m = _haversine_distance_m(lat, lng, centroid_lat, centroid_lon)
+
+        buildings.append(
+            {
+                "centroid_lat": centroid_lat,
+                "centroid_lon": centroid_lon,
+                "rooftop_area_sq_m": float(area_m2),
+                "azimuth": azimuth,
+                "orientation_score": orientation_score,
+                "distance_m": distance_m,
+            }
+        )
+        centroids.append((centroid_lat, centroid_lon))
+        max_area = max(max_area, float(area_m2))
+
+    if not buildings:
+        raise ValueError("No valid rooftop polygon could be extracted from nearby OSM buildings")
+
+    for i, building in enumerate(buildings):
+        nearby_count = 0
+        for j, (other_lat, other_lon) in enumerate(centroids):
+            if i == j:
+                continue
+            d = _haversine_distance_m(
+                float(building["centroid_lat"]),
+                float(building["centroid_lon"]),
+                other_lat,
+                other_lon,
+            )
+            if d <= OVERPASS_SHADE_RADIUS_METERS:
+                nearby_count += 1
+
+        shade_norm = nearby_count / max(len(buildings) - 1, 1)
+        building["shading_factor"] = float(np.clip(0.3 * shade_norm, 0.0, 1.0))
+
+    optimal_tilt = abs(lat)
+    tilt_factor = float(np.clip(np.cos(np.radians(abs(0.0 - optimal_tilt))), 0.7, 1.0))
+
+    sei_values: list[float] = []
+    for building in buildings:
+        sei = (
+            float(building["orientation_score"])
+            * float(building["rooftop_area_sq_m"])
+            * (1.0 - float(building["shading_factor"]))
+            * tilt_factor
+        )
+        building["tilt_factor"] = tilt_factor
+        building["solar_exposure_index"] = float(sei)
+        sei_values.append(float(sei))
+
+    max_sei = max(max(sei_values), 1e-9)
+    for building in buildings:
+        building["SEI_norm"] = float(np.clip(float(building["solar_exposure_index"]) / max_sei, 0.0, 1.0))
+
+    nearest = min(buildings, key=lambda b: float(b["distance_m"]))
+    orientation = _bearing_to_cardinal(float(nearest["azimuth"]))
+
+    return {
+        "rooftop_area_sq_m": float(nearest["rooftop_area_sq_m"]),
+        "orientation_score": float(nearest["orientation_score"]),
+        "shading_factor": float(nearest["shading_factor"]),
+        "tilt_factor": float(nearest["tilt_factor"]),
+        "SEI_norm": float(nearest["SEI_norm"]),
+        "orientation": orientation,
+        "azimuth": float(nearest["azimuth"]),
+        "distance_m": float(nearest["distance_m"]),
+        "source": "osm-live",
+    }
+
+
+def _get_live_rooftop_features(lat: float, lng: float, ctx_obj: ModelContext) -> dict[str, float | str]:
+    key = _cache_key("rooftop", lat, lng)
+    cached = _cache_get(ctx_obj, key)
+    if cached is not None:
+        return cached
+
+    try:
+        payload = _compute_live_rooftop_features(lat, lng)
+        _cache_set(ctx_obj, key, payload)
+        return payload
+    except Exception:
+        # Fallback to nearest precomputed spatial feature row.
+        fallback = ctx_obj._get_nearest_features(lat, lng)
+        orientation = "South" if lat >= 0 else "North"
+        payload = {
+            "rooftop_area_sq_m": float(fallback["rooftop_area_sq_m"]),
+            "orientation_score": float(fallback["orientation_score"]),
+            "shading_factor": float(fallback["shading_factor"]),
+            "tilt_factor": float(fallback["tilt_factor"]),
+            "SEI_norm": float(fallback["SEI_norm"]),
+            "orientation": orientation,
+            "azimuth": 180.0 if lat >= 0 else 0.0,
+            "distance_m": 0.0,
+            "source": "dataset-fallback",
+        }
+        _cache_set(ctx_obj, key, payload)
+        return payload
+
+
+def _get_live_weather(lat: float, lng: float, solar_potential_kwh: float, ctx_obj: ModelContext) -> dict[str, float]:
+    key = _cache_key("weather", lat, lng)
+    cached = _cache_get(ctx_obj, key)
+    if cached is not None:
+        return {
+            "clear_sky_ratio": float(cached["clear_sky_ratio"]),
+            "sunshine_hours": float(cached["sunshine_hours"]),
+            "cloud_cover": float(cached["cloud_cover"]),
+            "temperature": float(cached["temperature"]),
+            "humidity": float(cached["humidity"]),
+        }
+
+    try:
+        weather = _fetch_nasa_weather(lat, lng)
+    except Exception:
+        weather = _derive_weather_fallback(solar_potential_kwh, lat, lng)
+
+    _cache_set(ctx_obj, key, {k: float(v) for k, v in weather.items()})
+    return weather
 
 
 def _compute_confidence_level(
@@ -718,22 +1050,20 @@ def _build_predict_response(
     lng: float,
     solar_kwh: float,
     features: dict[str, float],
+    weather: dict[str, float],
+    rooftop_meta: dict[str, float | str],
 ) -> PredictResponse:
-    clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity = _derive_conditions(
-        solar_kwh, lat, lng
-    )
-    orientation, azimuth = _get_orientation_and_azimuth(lat)
     return PredictResponse(
         solarPotential=solar_kwh,
         rooftopArea=features["rooftop_area_sq_m"],
         solarExposureIndex=features["SEI_norm"],
-        orientation=orientation,
-        azimuth=azimuth,
-        sunshineHours=sunshine_hours,
-        cloudCover=cloud_cover,
-        temperature=temperature,
-        humidity=humidity,
-        clearSkyRatio=clear_sky_ratio,
+        orientation=str(rooftop_meta.get("orientation", "South")),
+        azimuth=float(rooftop_meta.get("azimuth", 180.0 if lat >= 0 else 0.0)),
+        sunshineHours=float(weather["sunshine_hours"]),
+        cloudCover=float(weather["cloud_cover"]),
+        temperature=float(weather["temperature"]),
+        humidity=float(weather["humidity"]),
+        clearSkyRatio=float(weather["clear_sky_ratio"]),
     )
 
 
@@ -745,23 +1075,39 @@ def predict(payload: PredictRequest) -> PredictResponse:
         raise HTTPException(status_code=503, detail="Model is not ready")
 
     lat, lng = payload.lat, payload.lng
-    features = ctx._get_nearest_features(lat, lng)
+    rooftop_payload = _get_live_rooftop_features(lat, lng, ctx)
+    features = {
+        "orientation_score": float(rooftop_payload["orientation_score"]),
+        "shading_factor": float(rooftop_payload["shading_factor"]),
+        "tilt_factor": float(rooftop_payload["tilt_factor"]),
+        "SEI_norm": float(rooftop_payload["SEI_norm"]),
+        "rooftop_area_sq_m": float(rooftop_payload["rooftop_area_sq_m"]),
+    }
 
     X_fi = np.array([[lat, lng, features["orientation_score"], features["shading_factor"],
                       features["tilt_factor"], features["SEI_norm"]]])
     ghi_j = float(ctx.fi_model.predict(X_fi)[0])
     solar_kwh = max(0.0, ghi_j / KWH_TO_J)
 
-    return _build_predict_response(lat, lng, solar_kwh, features)
+    weather = _get_live_weather(lat, lng, solar_kwh, ctx)
+
+    return _build_predict_response(lat, lng, solar_kwh, features, weather, rooftop_payload)
 
 
 @app.post("/compare", response_model=CompareResponse)
 def compare_models(payload: PredictRequest) -> CompareResponse:
-    if ctx.fi_model is None or ctx.baseline_model is None or ctx._kd_tree is None:
+    if ctx.fi_model is None or ctx.baseline_model is None or ctx._kd_tree is None or ctx.df is None:
         raise HTTPException(status_code=503, detail="Models are not ready")
 
     lat, lng = payload.lat, payload.lng
-    features = ctx._get_nearest_features(lat, lng)
+    rooftop_payload = _get_live_rooftop_features(lat, lng, ctx)
+    features = {
+        "orientation_score": float(rooftop_payload["orientation_score"]),
+        "shading_factor": float(rooftop_payload["shading_factor"]),
+        "tilt_factor": float(rooftop_payload["tilt_factor"]),
+        "SEI_norm": float(rooftop_payload["SEI_norm"]),
+        "rooftop_area_sq_m": float(rooftop_payload["rooftop_area_sq_m"]),
+    }
 
     X_base = np.array([[lat, lng]])
     X_fi = np.array([[lat, lng, features["orientation_score"], features["shading_factor"],
@@ -770,8 +1116,10 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
     baseline_kwh = max(0.0, float(ctx.baseline_model.predict(X_base)[0]) / KWH_TO_J)
     fi_kwh = max(0.0, float(ctx.fi_model.predict(X_fi)[0]) / KWH_TO_J)
 
-    baseline_result = _build_predict_response(lat, lng, baseline_kwh, features)
-    fi_result = _build_predict_response(lat, lng, fi_kwh, features)
+    weather = _get_live_weather(lat, lng, fi_kwh, ctx)
+
+    baseline_result = _build_predict_response(lat, lng, baseline_kwh, features, weather, rooftop_payload)
+    fi_result = _build_predict_response(lat, lng, fi_kwh, features, weather, rooftop_payload)
 
     solar_diff = fi_kwh - baseline_kwh
     solar_improvement_pct = (solar_diff / baseline_kwh * 100) if baseline_kwh != 0 else 0.0
