@@ -50,6 +50,7 @@ YEAR      = "2024"
 # Building feature columns to carry into the integrated dataset
 BUILDING_COLS = [
     "rooftop_area_sq_m",
+    "azimuth",
     "orientation_score",
     "shading_factor",
     "tilt_factor",
@@ -97,13 +98,15 @@ def integrate_datasets() -> None:
         osm_gdf = topo_features(osm_gdf)
         osm_gdf = normalize_sei(osm_gdf)
 
-    # ── Project OSM to WGS84 for coordinate matching ─────────────────────
-    if osm_gdf.crs and osm_gdf.crs.to_epsg() != 4326:
-        osm_gdf = osm_gdf.to_crs("EPSG:4326")
+    # ── Project OSM to UTM for accurate centroid calculation ─────────────
+    if osm_gdf.crs is None:
+        osm_gdf = osm_gdf.set_crs("EPSG:4326")
+    osm_utm       = osm_gdf.to_crs("EPSG:32651")          # UTM Zone 51N (metres)
+    centroids_utm = osm_utm.geometry.centroid              # accurate in metres
+    centroids_wgs = centroids_utm.to_crs("EPSG:4326")     # back to lat/lon
 
     # ── Build cKDTree on OSM building centroids ───────────────────────────
-    centroids     = osm_gdf.geometry.centroid
-    osm_coords    = np.column_stack([centroids.y, centroids.x])  # lat, lon
+    osm_coords    = np.column_stack([centroids_wgs.y, centroids_wgs.x])  # lat, lon
     tree          = cKDTree(osm_coords)
 
     # ── Query: for each spatial point find its nearest building ──────────

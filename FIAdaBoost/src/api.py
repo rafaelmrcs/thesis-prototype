@@ -8,6 +8,7 @@ from pathlib import Path
 import joblib
 import numpy as np
 import pandas as pd
+import pvlib
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
@@ -142,6 +143,98 @@ app.add_middleware(
 )
 
 
+# ── Live NASA POWER fetch ─────────────────────────────────────────────────────
+
+NASA_POWER_URL     = "https://power.larc.nasa.gov/api/temporal/daily/point"
+NASA_POWER_TIMEOUT = 30
+_nasa_cache: dict[tuple[float, float], dict] = {}
+
+
+def fetch_nasa_live(lat: float, lng: float, year: int = 2024) -> dict:
+    """
+    Fetch annual averages from NASA POWER (GHI, clear-sky ratio, temperature, humidity).
+    Cached by coordinate rounded to 2 dp (~1 km grid) — NASA resolution is ~50 km so
+    any two points in the same neighbourhood share the same result.
+    Falls back to Davao City climatological defaults on network error.
+    """
+    key = (round(lat, 2), round(lng, 2))
+    if key in _nasa_cache:
+        return _nasa_cache[key]
+
+    defaults = {"ghi_kwh": 4.963, "kt": 0.60, "temp_c": 27.5, "humidity_pct": 75.0}
+    try:
+        r = requests.get(
+            NASA_POWER_URL,
+            params={
+                "parameters": "ALLSKY_SFC_SW_DWN,ALLSKY_KT,T2M,RH2M",
+                "community":  "RE",
+                "latitude":   lat,
+                "longitude":  lng,
+                "start":      f"{year}0101",
+                "end":        f"{year}1231",
+                "format":     "JSON",
+            },
+            timeout=NASA_POWER_TIMEOUT,
+        )
+        r.raise_for_status()
+        data = r.json()["properties"]["parameter"]
+
+        def _mean(param: str) -> float:
+            vals = [v for v in data[param].values() if v not in (None, -999.0)]
+            return float(np.mean(vals)) if vals else 0.0
+
+        result = {
+            "ghi_kwh":      _mean("ALLSKY_SFC_SW_DWN"),
+            "kt":           _mean("ALLSKY_KT"),
+            "temp_c":       _mean("T2M"),
+            "humidity_pct": _mean("RH2M"),
+        }
+    except Exception:
+        result = defaults
+
+    _nasa_cache[key] = result
+    return result
+
+
+# ── pvlib POA ratio ───────────────────────────────────────────────────────────
+
+_poa_cache: dict[tuple[float, float], float] = {}
+
+
+def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
+    """
+    Annual-average POA / GHI ratio for a surface at the given azimuth and tilt.
+    Uses Davao City solar geometry via pvlib Ineichen clearsky model.
+    Cached per (lat, azimuth) pair — first call is slow (~1 s), subsequent are instant.
+    """
+    key = (round(lat, 2), round(azimuth_deg, 1))
+    if key in _poa_cache:
+        return _poa_cache[key]
+
+    location  = pvlib.location.Location(lat, 125.6128, altitude=30, tz="Asia/Manila")
+    times     = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
+    solar_pos = location.get_solarposition(times)
+    clearsky  = location.get_clearsky(times, model="ineichen")
+
+    ghi_mean = float(clearsky["ghi"].mean())
+    if ghi_mean == 0:
+        _poa_cache[key] = 1.0
+        return 1.0
+
+    poa = pvlib.irradiance.get_total_irradiance(
+        surface_tilt=tilt_deg,
+        surface_azimuth=azimuth_deg,
+        solar_zenith=solar_pos["apparent_zenith"],
+        solar_azimuth=solar_pos["azimuth"],
+        dni=clearsky["dni"],
+        ghi=clearsky["ghi"],
+        dhi=clearsky["dhi"],
+    )
+    ratio = float(poa["poa_global"].mean()) / ghi_mean
+    _poa_cache[key] = ratio
+    return ratio
+
+
 # ── Live OSM feature fetching ─────────────────────────────────────────────────
 
 OVERPASS_URL         = "https://overpass-api.de/api/interpreter"
@@ -210,6 +303,12 @@ def compute_live_features(lat: float, lng: float, sei_max: float) -> dict[str, f
     nearest = min(elements, key=lambda e: _dist_m(lat, lng, *_centroid(e["geometry"])))
     nodes   = nearest["geometry"]
 
+    lats = [n["lat"] for n in nodes]
+    lons = [n["lon"] for n in nodes]
+    bw   = max(lons) - min(lons)
+    bh   = max(lats) - min(lats)
+    azimuth_deg = math.degrees(math.atan2(bw, bh)) % 360
+
     orient = _orient_score(nodes)
     area   = _area_m2(nodes)
 
@@ -227,6 +326,7 @@ def compute_live_features(lat: float, lng: float, sei_max: float) -> dict[str, f
         "shading_factor":    shading,
         "SEI_norm":          sei_n,
         "rooftop_area_sq_m": area,
+        "azimuth_deg":       azimuth_deg,
     }
 
 
@@ -275,11 +375,15 @@ class ModelContext:
         assert self._kd_tree is not None and self.df is not None
         _, idx = self._kd_tree.query([lat, lng])
         row    = self.df.iloc[idx]
+        o      = float(row["orientation_score"])
+        # Back-derive azimuth from orientation_score: orient = (cos(az-180)+1)/2
+        az_deg = 180.0 + math.degrees(math.acos(max(-1.0, min(1.0, 2.0 * o - 1.0))))
         return {
-            "orientation_score": float(row["orientation_score"]),
+            "orientation_score": o,
             "shading_factor":    float(row["shading_factor"]),
             "SEI_norm":          float(row["SEI_norm"]),
             "rooftop_area_sq_m": float(row["rooftop_area_sq_m"]),
+            "azimuth_deg":       az_deg,
         }
 
     def get_features(self, lat: float, lng: float) -> dict[str, float]:
@@ -662,16 +766,6 @@ def _get_orientation_and_azimuth(lat: float) -> tuple[str, float]:
     return ("South", 180.0) if lat >= 0 else ("North", 0.0)
 
 
-def _derive_conditions(solar_potential_kwh: float, lat: float, lng: float) -> tuple[float, float, float, float, float]:
-    clear_sky_ratio = float(np.clip(solar_potential_kwh / 8.0, 0.25, 0.9))
-    sunshine_hours  = float(np.clip(3.5 + clear_sky_ratio * 7.0, 3.0, 10.5))
-    cloud_cover     = float(np.clip((1.0 - clear_sky_ratio) * 100.0, 8.0, 85.0))
-    latitude_factor = abs(lat) / 20.0
-    temperature     = float(np.clip(31.0 - latitude_factor * 8.0 + (clear_sky_ratio - 0.5) * 3.0, 20.0, 36.0))
-    humidity        = float(np.clip(88.0 - (clear_sky_ratio * 35.0) + (abs(lng) % 1.0) * 8.0, 40.0, 95.0))
-    return clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity
-
-
 def _compute_confidence_level(lat: float, lng: float, baseline_solar: float, fi_solar: float, df: pd.DataFrame) -> float:
     coords      = df[["lat", "lon"]].astype(float).to_numpy()
     distances_km = np.sqrt(np.sum((coords - np.array([[lat, lng]])) ** 2, axis=1)) * 111.0
@@ -685,8 +779,13 @@ def _compute_confidence_level(lat: float, lng: float, baseline_solar: float, fi_
     return float(np.clip(0.5 * prox_conf + 0.3 * density_conf + 0.2 * agree_conf, 35.0, 99.0))
 
 
-def _build_predict_response(lat: float, lng: float, solar_kwh: float, features: dict[str, float]) -> PredictResponse:
-    clear_sky_ratio, sunshine_hours, cloud_cover, temperature, humidity = _derive_conditions(solar_kwh, lat, lng)
+def _build_predict_response(
+    lat: float, lng: float, solar_kwh: float,
+    features: dict[str, float], nasa: dict,
+) -> PredictResponse:
+    kt              = float(np.clip(nasa["kt"], 0.0, 1.0))
+    sunshine_hours  = float(np.clip(nasa["ghi_kwh"] / 0.7, 3.0, 12.0))
+    cloud_cover     = float(np.clip((1.0 - kt) * 100.0, 5.0, 95.0))
     orientation, azimuth = _get_orientation_and_azimuth(lat)
     return PredictResponse(
         solarPotential=solar_kwh,
@@ -696,9 +795,9 @@ def _build_predict_response(lat: float, lng: float, solar_kwh: float, features: 
         azimuth=azimuth,
         sunshineHours=sunshine_hours,
         cloudCover=cloud_cover,
-        temperature=temperature,
-        humidity=humidity,
-        clearSkyRatio=clear_sky_ratio,
+        temperature=float(nasa["temp_c"]),
+        humidity=float(nasa["humidity_pct"]),
+        clearSkyRatio=kt,
     )
 
 
@@ -713,17 +812,15 @@ def predict(payload: PredictRequest) -> PredictResponse:
 
     # Fetch live building features from OSM (falls back to KD-tree if Overpass is unavailable).
     features = ctx.get_features(lat, lng)
+    # Fetch real weather + GHI from NASA POWER.
+    nasa     = fetch_nasa_live(lat, lng)
 
-    X_fi = np.array([[
-        lat, lng,
-        features["orientation_score"],
-        features["shading_factor"],
-        features["SEI_norm"],
-    ]])
-    ghi_j     = float(ctx.fi_model.predict(X_fi)[0])
-    solar_kwh = max(0.0, ghi_j / KWH_TO_J)   # kWh/m²/day
+    # FI-AdaBoost: NASA live GHI × pvlib POA ratio for this building's azimuth.
+    # This gives genuinely different values per building orientation.
+    ratio     = _poa_ratio(lat, features["azimuth_deg"])
+    solar_kwh = max(0.0, nasa["ghi_kwh"] * ratio)
 
-    return _build_predict_response(lat, lng, solar_kwh, features)
+    return _build_predict_response(lat, lng, solar_kwh, features, nasa)
 
 
 @app.post("/compare", response_model=CompareResponse)
@@ -733,37 +830,20 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
 
     lat, lng = payload.lat, payload.lng
 
-    # Single live feature fetch used by both models.
+    # Fetch live building features and real NASA weather/GHI for this location.
     features = ctx.get_features(lat, lng)
+    nasa     = fetch_nasa_live(lat, lng)
 
-    X_base = np.array([[lat, lng]])
-    X_fi   = np.array([[
-        lat, lng,
-        features["orientation_score"],
-        features["shading_factor"],
-        features["SEI_norm"],
-    ]])
-
+    # Baseline AdaBoost: trained model only (lat/lon) — replicates Quezon City study.
+    X_base       = np.array([[lat, lng]])
     baseline_kwh = max(0.0, float(ctx.baseline_model.predict(X_base)[0]) / KWH_TO_J)
-    fi_kwh_raw   = max(0.0, float(ctx.fi_model.predict(X_fi)[0])         / KWH_TO_J)
 
-    # Phase 2 — apply building-level geometry corrections to FI prediction only.
-    # Baseline stays as theoretical sky irradiance (geometry-blind).
-    # Corrections use training-set bounds to avoid leakage, matching model_training2.py.
-    o_min = float(ctx.df["orientation_score"].min())
-    o_max = float(ctx.df["orientation_score"].max())
-    s_min = float(ctx.df["shading_factor"].min())
-    s_max = float(ctx.df["shading_factor"].max())
-    orient_corr = 0.85 + 0.15 * float(np.clip(
-        (features["orientation_score"] - o_min) / (o_max - o_min + 1e-9), 0.0, 1.0
-    ))
-    shade_corr = 0.85 + 0.15 * float(np.clip(
-        (features["shading_factor"] - s_min) / (s_max - s_min + 1e-9), 0.0, 1.0
-    ))
-    fi_kwh = fi_kwh_raw * orient_corr * shade_corr
+    # FI-AdaBoost: NASA live GHI × pvlib POA ratio for this building's azimuth.
+    ratio  = _poa_ratio(lat, features["azimuth_deg"])
+    fi_kwh = max(0.0, nasa["ghi_kwh"] * ratio)
 
-    baseline_result = _build_predict_response(lat, lng, baseline_kwh, features)
-    fi_result       = _build_predict_response(lat, lng, fi_kwh,       features)
+    baseline_result = _build_predict_response(lat, lng, baseline_kwh, features, nasa)
+    fi_result       = _build_predict_response(lat, lng, fi_kwh,       features, nasa)
 
     solar_diff             = fi_kwh - baseline_kwh
     solar_improvement_pct  = (solar_diff / baseline_kwh * 100) if baseline_kwh != 0 else 0.0

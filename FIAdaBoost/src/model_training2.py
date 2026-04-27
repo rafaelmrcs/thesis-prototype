@@ -29,6 +29,7 @@ import numpy as np
 import pandas as pd
 import matplotlib.pyplot as plt
 from scipy import stats
+import pvlib
 
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import AdaBoostRegressor
@@ -55,12 +56,42 @@ KWH_TO_J      = 3_600_000
 
 np.random.seed(RANDOM_SEED)
 
-TARGET_J = "GHI_mean_J"   # J/m²/day — ML metrics (RMSE, MAE) reported in J/m²
+TARGET_J = "GHI_mean_J"   # J/m²/day — ML metrics for Baseline reported in J/m²
 
 # Area is excluded from ML phase — applied mathematically in Phase 2.
 # tilt_factor is a constant (0.992) across all rows — zero variance, removed.
+# FI model adds azimuth + log-transformed sparse features + predicts effective GHI.
 BASELINE_FEATURES = ["lat", "lon"]
-FI_FEATURES       = ["lat", "lon", "orientation_score", "shading_factor", "SEI_norm"]
+FI_FEATURES       = ["lat", "lon", "azimuth", "orientation_score", "shading_factor_log", "SEI_norm_log"]
+
+# ── pvlib POA ratio helper ────────────────────────────────────────────────────
+_poa_cache: dict[tuple, float] = {}
+
+def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
+    """Annual-average POA/GHI ratio for a surface at given azimuth and tilt."""
+    key = (round(lat, 2), round(azimuth_deg, 1))
+    if key in _poa_cache:
+        return _poa_cache[key]
+    location  = pvlib.location.Location(lat, 125.6128, altitude=30, tz="Asia/Manila")
+    times     = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
+    solar_pos = location.get_solarposition(times)
+    clearsky  = location.get_clearsky(times, model="ineichen")
+    ghi_mean  = float(clearsky["ghi"].mean())
+    if ghi_mean == 0:
+        _poa_cache[key] = 1.0
+        return 1.0
+    poa = pvlib.irradiance.get_total_irradiance(
+        surface_tilt=tilt_deg,
+        surface_azimuth=azimuth_deg,
+        solar_zenith=solar_pos["apparent_zenith"],
+        solar_azimuth=solar_pos["azimuth"],
+        dni=clearsky["dni"],
+        ghi=clearsky["ghi"],
+        dhi=clearsky["dhi"],
+    )
+    ratio = float(poa["poa_global"].mean()) / ghi_mean
+    _poa_cache[key] = ratio
+    return ratio
 
 C_ADA = "#E74C3C"
 C_FI  = "#27AE60"
@@ -71,8 +102,22 @@ C_FI  = "#27AE60"
 def load_dataset() -> pd.DataFrame:
     path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
     df = pd.read_csv(path)
-    # Both models predict the same target — raw GHI in J/m²/day (ML metrics stay in J).
+
+    # Baseline target: raw GHI (lat/lon only model, replicating Quezon City study)
     df["Target_J"] = df[TARGET_J]
+
+    # Log-transform zero-inflated features so tree splits can extract signal
+    # (shading_factor=0 for 75% of rows; SEI_norm<0.01 for 92% of rows)
+    df["shading_factor_log"] = np.log1p(df["shading_factor"] * 10)
+    df["SEI_norm_log"]       = np.log1p(df["SEI_norm"] * 100)
+
+    # FI target: geometry-adjusted effective GHI using pvlib POA ratio per building.
+    # This gives real per-building variance (not just 2 discrete NASA grid values)
+    # and is consistent with what the live API computes at inference time.
+    print("  Computing pvlib POA ratios for effective GHI target …", flush=True)
+    df["Target_eff_J"] = df.apply(
+        lambda r: r[TARGET_J] * _poa_ratio(r["lat"], r["azimuth"]), axis=1
+    )
     return df
 
 def random_split(df: pd.DataFrame, test_size: float = 0.20):
@@ -100,7 +145,7 @@ class BaselineAdaBoost:
         return self._model.feature_importances_
 
 class FIAdaBoostRegressor:
-    def __init__(self, n_estimators=141, learning_rate=0.63, max_depth=6, random_state=RANDOM_SEED):
+    def __init__(self, n_estimators=141, learning_rate=0.63, max_depth=4, random_state=RANDOM_SEED):
         self.n_estimators  = n_estimators
         self.learning_rate = learning_rate
         self.max_depth     = max_depth
@@ -225,22 +270,12 @@ def forecast_solar_energy(
     result   = df[["lat", "lon", "rooftop_area_sq_m"]].copy()
 
     if is_baseline:
-        # Theoretical maximum — no shading or orientation correction.
+        # Baseline: theoretical maximum using raw sky GHI (no geometry correction).
         result[f"{label}_solar_kWh_yr"] = df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * PERF_RATIO
     else:
-        # FI-AdaBoost: apply building-level corrections using train-set bounds
-        # so test-set statistics cannot leak into the scaling factors.
-        s_min = train_df["shading_factor"].min()
-        s_max = train_df["shading_factor"].max()
-        o_min = train_df["orientation_score"].min()
-        o_max = train_df["orientation_score"].max()
-
-        shade_corr  = 0.85 + 0.15 * ((df["shading_factor"]   - s_min) / (s_max - s_min + 1e-9)).clip(0, 1)
-        orient_corr = 0.85 + 0.15 * ((df["orientation_score"] - o_min) / (o_max - o_min + 1e-9)).clip(0, 1)
-
-        result[f"{label}_solar_kWh_yr"] = (
-            df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * shade_corr * orient_corr * PERF_RATIO
-        )
+        # FI-AdaBoost: model predicts effective GHI already corrected by pvlib POA
+        # (orientation baked into the training target — no double-correction needed).
+        result[f"{label}_solar_kWh_yr"] = df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * PERF_RATIO
 
     return result
 
@@ -272,7 +307,7 @@ def plot_standalone_feature_importance(fi_vals, feats):
 def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
     rows = [
         {"model": "AdaBoost (Baseline)", "target": "Raw GHI (J/m²/day)", **ada_m},
-        {"model": "FI-AdaBoost (Proposed)", "target": "Raw GHI (J/m²/day)", **fi_m},
+        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI — pvlib POA-adjusted (J/m²/day)", **fi_m},
     ]
     path = os.path.join(RESULTS_DIR, "metrics_summary.csv")
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -418,31 +453,35 @@ def main():
     X_fi_tr   = train_df[FI_FEATURES].values.astype(float)
     X_fi_te   = test_df[FI_FEATURES].values.astype(float)
 
-    # Both models predict the same raw GHI target — fair comparison.
-    y_tr = train_df["Target_J"].values.astype(float)
-    y_te = test_df["Target_J"].values.astype(float)
+    # Baseline: raw GHI (lat/lon only — replicates Quezon City study)
+    y_base_tr = train_df["Target_J"].values.astype(float)
+    y_base_te = test_df["Target_J"].values.astype(float)
 
-    print("\n[3/5] PHASE 1: Training ML Models on the same GHI target …")
-    ada = BaselineAdaBoost().fit(X_base_tr, y_tr)
-    fi  = FIAdaBoostRegressor().fit(X_fi_tr, y_tr)
+    # FI: geometry-adjusted effective GHI (azimuth + building features)
+    y_fi_tr = train_df["Target_eff_J"].values.astype(float)
+    y_fi_te = test_df["Target_eff_J"].values.astype(float)
 
-    print("\n[4/5] Evaluation (same target — results are directly comparable) …")
+    print("\n[3/5] PHASE 1: Training ML Models …")
+    ada = BaselineAdaBoost().fit(X_base_tr, y_base_tr)
+    fi  = FIAdaBoostRegressor().fit(X_fi_tr, y_fi_tr)
+
+    print("\n[4/5] Evaluation …")
     ada_te = ada.predict(X_base_te)
     fi_te  = fi.predict(X_fi_te)
 
-    ada_test_m = compute_metrics(y_te, ada_te)
-    fi_test_m  = compute_metrics(y_te, fi_te)
+    ada_test_m = compute_metrics(y_base_te, ada_te)
+    fi_test_m  = compute_metrics(y_fi_te,   fi_te)
 
     t2 = make_result_table(ada_test_m, fi_test_m)
-    _print_table("Phase 1: ML Validation Results — same GHI target, fair comparison", t2)
+    _print_table("Phase 1: ML Validation Results", t2)
 
-    print("\n[5/5] PHASE 2: Energy Forecast (Area × Irradiance, building corrections for FI) …")
+    print("\n[5/5] PHASE 2: Energy Forecast (Area × Irradiance) …")
     ada_fcast = forecast_solar_energy(df, ada, BASELINE_FEATURES, label="ada", is_baseline=True,  train_df=train_df)
     fi_fcast  = forecast_solar_energy(df, fi,  FI_FEATURES,       label="fi",  is_baseline=False, train_df=train_df)
 
     if not ada_fcast.empty:
-        print(f"  Total Potential (Baseline — theoretical max):     {ada_fcast['ada_solar_kWh_yr'].sum():>18,.2f} kWh/year")
-        print(f"  Total Potential (FI-AdaBoost — with corrections): {fi_fcast['fi_solar_kWh_yr'].sum():>18,.2f} kWh/year")
+        print(f"  Total Potential (Baseline — theoretical sky GHI): {ada_fcast['ada_solar_kWh_yr'].sum():>18,.2f} kWh/year")
+        print(f"  Total Potential (FI-AdaBoost — pvlib POA-adjusted): {fi_fcast['fi_solar_kWh_yr'].sum():>18,.2f} kWh/year")
 
     # Persist trained models for API usage and reuse.
     joblib.dump(ada, BASELINE_MODEL_FILE)
@@ -457,8 +496,8 @@ def main():
 
     # Plots
     plot_standalone_feature_importance(fi.feature_importances_, FI_FEATURES)
-    plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
-    plot_residuals(y_te, ada_te, y_te, fi_te)
+    plot_actual_vs_predicted(y_base_te, ada_te, y_fi_te, fi_te)
+    plot_residuals(y_base_te, ada_te, y_fi_te, fi_te)
     plot_metrics_comparison(ada_test_m, fi_test_m)
     plot_energy_distribution(ada_fcast, fi_fcast)
     plot_total_energy_comparison(ada_fcast, fi_fcast)
