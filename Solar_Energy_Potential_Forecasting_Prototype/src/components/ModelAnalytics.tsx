@@ -104,14 +104,14 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   <p className="mt-1 text-3xl font-semibold text-slate-700">
                     {liveComparison.baseline.solarPotential.toFixed(3)}
                   </p>
-                  <p className="text-xs text-slate-400">kWh/m²/day (predicted GHI)</p>
+                  <p className="text-xs text-slate-400">kWh/m²/day (sky irradiance — geometry-blind)</p>
                 </div>
                 <div className="rounded-xl border-2 border-orange-200 bg-white p-4 shadow-sm">
                   <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost</p>
                   <p className="mt-1 text-3xl font-semibold text-orange-600">
                     {liveComparison.fiAdaBoost.solarPotential.toFixed(3)}
                   </p>
-                  <p className="text-xs text-slate-400">kWh/m²/day (predicted GHI)</p>
+                  <p className="text-xs text-slate-400">kWh/m²/day (geometry-adjusted for this rooftop)</p>
                 </div>
                 <div className="rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 p-4 text-white shadow-lg">
                   <p className="text-xs opacity-80 uppercase tracking-wide">Difference</p>
@@ -136,7 +136,7 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
 
               {liveComparison.performanceMetricsComparison && (
                 <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide">Saved Test Metrics (from results/table2_test.csv)</p>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Saved Test Metrics (from results/metrics_summary.csv)</p>
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <div>
                       <p className="text-xs text-slate-500">RMSE (kWh/m²/day)</p>

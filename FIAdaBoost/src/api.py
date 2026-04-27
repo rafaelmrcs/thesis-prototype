@@ -745,7 +745,22 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
     ]])
 
     baseline_kwh = max(0.0, float(ctx.baseline_model.predict(X_base)[0]) / KWH_TO_J)
-    fi_kwh       = max(0.0, float(ctx.fi_model.predict(X_fi)[0])         / KWH_TO_J)
+    fi_kwh_raw   = max(0.0, float(ctx.fi_model.predict(X_fi)[0])         / KWH_TO_J)
+
+    # Phase 2 — apply building-level geometry corrections to FI prediction only.
+    # Baseline stays as theoretical sky irradiance (geometry-blind).
+    # Corrections use training-set bounds to avoid leakage, matching model_training2.py.
+    o_min = float(ctx.df["orientation_score"].min())
+    o_max = float(ctx.df["orientation_score"].max())
+    s_min = float(ctx.df["shading_factor"].min())
+    s_max = float(ctx.df["shading_factor"].max())
+    orient_corr = 0.85 + 0.15 * float(np.clip(
+        (features["orientation_score"] - o_min) / (o_max - o_min + 1e-9), 0.0, 1.0
+    ))
+    shade_corr = 0.85 + 0.15 * float(np.clip(
+        (features["shading_factor"] - s_min) / (s_max - s_min + 1e-9), 0.0, 1.0
+    ))
+    fi_kwh = fi_kwh_raw * orient_corr * shade_corr
 
     baseline_result = _build_predict_response(lat, lng, baseline_kwh, features)
     fi_result       = _build_predict_response(lat, lng, fi_kwh,       features)
