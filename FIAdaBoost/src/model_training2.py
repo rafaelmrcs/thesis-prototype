@@ -445,6 +445,14 @@ def main():
     print("\n[1/5] Loading dataset …")
     df = load_dataset()
 
+    # Persist effective_GHI_J so api.py can evaluate FI against the correct target
+    # without recomputing pvlib at runtime.
+    _csv_path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
+    _df_csv   = pd.read_csv(_csv_path)
+    _df_csv["effective_GHI_J"] = df["Target_eff_J"].values
+    _df_csv.to_csv(_csv_path, index=False)
+    print("  Saved effective_GHI_J → integrated_dataset.csv")
+
     print("\n[2/5] 80/20 Random Train/Test Split …")
     train_df, test_df = random_split(df, test_size=0.20)
 

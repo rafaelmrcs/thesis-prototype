@@ -401,6 +401,12 @@ class ModelContext:
     def _target_j(self, df: pd.DataFrame) -> np.ndarray:
         return df[TARGET_J].values.astype(float)
 
+    def _fi_target_j(self, df: pd.DataFrame) -> np.ndarray:
+        """FI target: effective_GHI_J (pvlib POA-adjusted) if saved, else raw GHI."""
+        if "effective_GHI_J" in df.columns:
+            return df["effective_GHI_J"].values.astype(float)
+        return self._target_j(df)
+
     # ── Model loading / training ──────────────────────────────────────────────
 
     @staticmethod
@@ -435,7 +441,7 @@ class ModelContext:
     def _train_fi_model(self) -> FIAdaBoostRegressor:
         assert self.df is not None
         X = self.df[FI_FEATURES].values.astype(float)
-        y = self._target_j(self.df)   # raw GHI — same target as model_training2.py
+        y = self._fi_target_j(self.df)   # effective_GHI_J (pvlib POA-adjusted)
         model = FIAdaBoostRegressor()
         model.fit(X, y)
         return model
@@ -564,18 +570,19 @@ class ModelContext:
 
         # Prefer pre-computed metrics from the results file for consistency with reports.
         if not self._load_metrics_from_results():
-            test_df     = self._analytics_test_df()
-            X_fi_test   = test_df[FI_FEATURES].values.astype(float)
-            X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-            y_test      = self._target_j(test_df)   # same target for both
+            test_df      = self._analytics_test_df()
+            X_fi_test    = test_df[FI_FEATURES].values.astype(float)
+            X_base_test  = test_df[BASELINE_FEATURES].values.astype(float)
+            y_base_test  = self._target_j(test_df)      # raw GHI for baseline
+            y_fi_test    = self._fi_target_j(test_df)   # effective GHI for FI
 
             base_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float)
             fi_pred   = np.asarray(self.fi_model.predict(X_fi_test),         dtype=float)
 
             # Report in kWh/m²/day for readability.
             self.performance_metrics = {
-                "baseline":   self._evaluate_metrics(y_test / KWH_TO_J, base_pred / KWH_TO_J),
-                "fiAdaBoost": self._evaluate_metrics(y_test / KWH_TO_J, fi_pred   / KWH_TO_J),
+                "baseline":   self._evaluate_metrics(y_base_test / KWH_TO_J, base_pred / KWH_TO_J),
+                "fiAdaBoost": self._evaluate_metrics(y_fi_test   / KWH_TO_J, fi_pred   / KWH_TO_J),
             }
 
         self.feature_importance_ranking = self._compute_feature_importance_ranking()
@@ -586,10 +593,11 @@ class ModelContext:
             return
 
         # Always compute from live models — no dependency on result CSV files.
-        test_df     = self._analytics_test_df()
-        X_fi_test   = test_df[FI_FEATURES].values.astype(float)
-        X_base_test = test_df[BASELINE_FEATURES].values.astype(float)
-        y_kwh       = self._target_j(test_df) / KWH_TO_J   # same target for both
+        test_df      = self._analytics_test_df()
+        X_fi_test    = test_df[FI_FEATURES].values.astype(float)
+        X_base_test  = test_df[BASELINE_FEATURES].values.astype(float)
+        y_kwh_base   = self._target_j(test_df)    / KWH_TO_J   # raw GHI for baseline
+        y_kwh_fi     = self._fi_target_j(test_df) / KWH_TO_J   # effective GHI for FI
 
         base_pred = np.asarray(self.baseline_model.predict(X_base_test), dtype=float) / KWH_TO_J
         fi_pred   = np.asarray(self.fi_model.predict(X_fi_test),         dtype=float) / KWH_TO_J
@@ -598,48 +606,57 @@ class ModelContext:
         sample_idx  = np.unique(np.linspace(0, len(test_df) - 1, num=sample_size, dtype=int))
         date_labels = [str(test_df.index[i]) for i in sample_idx]
 
-        y_s    = y_kwh[sample_idx]
-        base_s = base_pred[sample_idx]
-        fi_s   = fi_pred[sample_idx]
+        y_base_s = y_kwh_base[sample_idx]
+        y_fi_s   = y_kwh_fi[sample_idx]
+        base_s   = base_pred[sample_idx]
+        fi_s     = fi_pred[sample_idx]
 
-        all_vals   = np.concatenate([y_s, base_s, fi_s])
+        all_vals   = np.concatenate([y_base_s, y_fi_s, base_s, fi_s])
         domain_min = float(np.min(all_vals))
         domain_max = float(np.max(all_vals))
 
         predicted_vs_actual = PredictedVsActualData(
             baseline=[
                 PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
-                for a, p, d in zip(y_s, base_s, date_labels)
+                for a, p, d in zip(y_base_s, base_s, date_labels)
             ],
             fiAdaBoost=[
                 PredictedActualPoint(actual=float(a), predicted=float(p), date=d)
-                for a, p, d in zip(y_s, fi_s, date_labels)
+                for a, p, d in zip(y_fi_s, fi_s, date_labels)
             ],
             domainMin=domain_min,
             domainMax=domain_max,
         )
 
-        baseline_residuals = base_pred - y_kwh
-        fi_residuals       = fi_pred   - y_kwh
+        baseline_residuals = base_pred - y_kwh_base
+        fi_residuals       = fi_pred   - y_kwh_fi
 
-        baseline_metrics = self._evaluate_metrics(y_kwh, base_pred)
-        fi_metrics       = self._evaluate_metrics(y_kwh, fi_pred)
-        # Keep performance_metrics in sync (live computation may differ slightly from CSV).
-        self.performance_metrics = {"baseline": baseline_metrics, "fiAdaBoost": fi_metrics}
+        baseline_metrics = self._evaluate_metrics(y_kwh_base, base_pred)
+        fi_metrics       = self._evaluate_metrics(y_kwh_fi,   fi_pred)
+        # Use CSV-loaded metrics if available (more reliable); only fall back to live.
+        if not self.performance_metrics:
+            self.performance_metrics = {"baseline": baseline_metrics, "fiAdaBoost": fi_metrics}
+
+        # Always use the correctly-computed per-target metrics for the analytics card.
+        report_metrics = self.performance_metrics
 
         self.training_analytics = TrainingAnalyticsResponse(
             performanceMetricsComparison={
-                "baseline":          baseline_metrics,
-                "fiAdaBoost":        fi_metrics,
+                "baseline":          report_metrics["baseline"],
+                "fiAdaBoost":        report_metrics["fiAdaBoost"],
                 "rmseImprovementPct": float(
-                    (baseline_metrics["rmse"] - fi_metrics["rmse"]) / baseline_metrics["rmse"] * 100
-                    if baseline_metrics["rmse"] != 0 else 0.0
+                    (report_metrics["baseline"]["rmse"] - report_metrics["fiAdaBoost"]["rmse"])
+                    / report_metrics["baseline"]["rmse"] * 100
+                    if report_metrics["baseline"]["rmse"] != 0 else 0.0
                 ),
                 "maeImprovementPct": float(
-                    (baseline_metrics["mae"] - fi_metrics["mae"]) / baseline_metrics["mae"] * 100
-                    if baseline_metrics["mae"] != 0 else 0.0
+                    (report_metrics["baseline"]["mae"] - report_metrics["fiAdaBoost"]["mae"])
+                    / report_metrics["baseline"]["mae"] * 100
+                    if report_metrics["baseline"]["mae"] != 0 else 0.0
                 ),
-                "r2ImprovementPct": float((fi_metrics["r2"] - baseline_metrics["r2"]) * 100),
+                "r2ImprovementPct": float(
+                    (report_metrics["fiAdaBoost"]["r2"] - report_metrics["baseline"]["r2"]) * 100
+                ),
             },
             predictedVsActual=predicted_vs_actual,
             errorDistribution=self._build_error_distribution(baseline_residuals, fi_residuals),
