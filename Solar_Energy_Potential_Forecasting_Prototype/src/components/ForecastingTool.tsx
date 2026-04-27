@@ -422,7 +422,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <div>
                   <CardTitle className="text-2xl">Predicted Solar Energy Potential</CardTitle>
                   <CardDescription className="text-sm">
-                    Powered by the saved FI-AdaBoost model artifact and nearest rooftop features
+                    FI-AdaBoost model with live rooftop geometry fetched from OpenStreetMap — similar to Google Sunroof
                   </CardDescription>
                 </div>
                 <div className={`w-16 h-16 bg-gradient-to-br ${getSolarRating(prediction.solarPotential).bgGradient} rounded-full flex items-center justify-center shadow-lg`}>

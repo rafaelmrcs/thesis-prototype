@@ -1,3 +1,0 @@
-Model,RMSE (J/m²/day),MAE  (J/m²/day),RMSE (kWh/m²/day),MAE  (kWh/m²/day),R²
-AdaBoost Regression (Baseline),19309.95,394.16,0.005364,0.000109,0.9916
-FI-AdaBoost Regression (Proposed),33445.81,1182.49,0.009291,0.000328,0.9747

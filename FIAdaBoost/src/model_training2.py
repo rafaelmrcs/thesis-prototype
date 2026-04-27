@@ -6,13 +6,16 @@ AdaBoost Regression (Baseline)  vs  FI-AdaBoost Regression (Proposed)
 
 METHODOLOGY (Two-Phase Pipeline)
 ──────────────────────────────────────────────────────────────────────────
-  PHASE 1: MACHINE LEARNING
-  - Baseline predicts RAW Irradiance (J/m2) using [lat, lon].
-  - FI-AdaBoost predicts EFFECTIVE Irradiance (J/m2) using spatial features.
-  
+  PHASE 1: MACHINE LEARNING (fair comparison — same target for both models)
+  - Both models predict RAW GHI (J/m²/day).
+  - Baseline uses [lat, lon] only.
+  - FI-AdaBoost uses [lat, lon, orientation_score, shading_factor, SEI_norm],
+    with a novel feature-importance-weighted boosting update (the Φᵢ term).
+
   PHASE 2: ENERGY FORECASTING (Equation 5)
-  - Both models take their predicted J/m2 and multiply it by Rooftop Area 
-    and Panel Efficiency to get the final Energy Yield (kWh).
+  - Baseline: theoretical maximum (area × GHI × efficiency × PR).
+  - FI-AdaBoost: realistic estimate — applies building-level shading and
+    orientation corrections derived from train-set statistics (no leakage).
 ────────────────────────────────────────────────────────────────────────────
 """
 
@@ -45,18 +48,19 @@ FI_MODEL_FILE       = os.path.join(MODEL_DIR, "fi_adaboost.pkl")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RANDOM_SEED   = 42
-PANEL_EFF     = 0.192     
-PERF_RATIO    = 0.78      
+PANEL_EFF     = 0.192
+PERF_RATIO    = 0.78
 DAYS_PER_YEAR = 365
 KWH_TO_J      = 3_600_000
 
 np.random.seed(RANDOM_SEED)
 
-TARGET_J = "GHI_mean_J"          
+TARGET_J = "GHI_mean_J"   # J/m²/day — ML metrics (RMSE, MAE) reported in J/m²
 
-# 🚨 THE FEATURES: Area is REMOVED from ML phase (used in Math phase later)
+# Area is excluded from ML phase — applied mathematically in Phase 2.
+# tilt_factor is a constant (0.992) across all rows — zero variance, removed.
 BASELINE_FEATURES = ["lat", "lon"]
-FI_FEATURES       = ["lat", "lon", "orientation_score", "shading_factor", "tilt_factor", "SEI_norm"]
+FI_FEATURES       = ["lat", "lon", "orientation_score", "shading_factor", "SEI_norm"]
 
 C_ADA = "#E74C3C"
 C_FI  = "#27AE60"
@@ -64,27 +68,11 @@ C_FI  = "#27AE60"
 # =============================================================================
 # DATA LOADING & SPLITTING
 # =============================================================================
-# =============================================================================
-# DATA LOADING & SPLITTING
-# =============================================================================
 def load_dataset() -> pd.DataFrame:
     path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
     df = pd.read_csv(path)
-    
-    # Target 1: Baseline pipeline (Theoretical Raw GHI)
-    df["Target_Raw_J"] = df[TARGET_J]
-    
-    # 🚨 THE GWH FIX: Normalize the building features so they don't shrink the energy to zero!
-    # This converts your raw dataset values into realistic solar multipliers (between 85% and 100%)
-    s_min, s_max = df["shading_factor"].min(), df["shading_factor"].max()
-    o_min, o_max = df["orientation_score"].min(), df["orientation_score"].max()
-    
-    safe_shade  = 0.85 + 0.15 * ((df["shading_factor"] - s_min) / (s_max - s_min + 1e-9))
-    safe_orient = 0.85 + 0.15 * ((df["orientation_score"] - o_min) / (o_max - o_min + 1e-9))
-    
-    # Target 2: FI-AdaBoost pipeline (Realistic Effective GHI)
-    df["Target_Effective_J"] = df[TARGET_J] * safe_shade * safe_orient
-    
+    # Both models predict the same target — raw GHI in J/m²/day (ML metrics stay in J).
+    df["Target_J"] = df[TARGET_J]
     return df
 
 def random_split(df: pd.DataFrame, test_size: float = 0.20):
@@ -199,7 +187,10 @@ def compute_metrics(y_true: np.ndarray, y_pred: np.ndarray) -> dict:
 
 def make_result_table(ada_m: dict, fi_m: dict) -> pd.DataFrame:
     rows = []
-    for label, m in [("AdaBoost Regression (Raw GHI)", ada_m), ("FI-AdaBoost Regression (Effective GHI)", fi_m)]:
+    for label, m in [
+        ("AdaBoost Regression (Baseline — lat/lon only)", ada_m),
+        ("FI-AdaBoost Regression (Proposed — spatial features)", fi_m),
+    ]:
         rows.append({
             "Model":             label,
             "RMSE (J/m²/day)":  round(m["RMSE_J"], 2),
@@ -219,23 +210,38 @@ def _print_table(title: str, df: pd.DataFrame) -> None:
 # =============================================================================
 # PHASE 2: SOLAR FORECAST (MATH EQUATION)
 # =============================================================================
-def forecast_solar_energy(df: pd.DataFrame, model, feature_cols: list, label: str, is_baseline: bool) -> pd.DataFrame:
-    X_all  = df[feature_cols].values.astype(float)
-    y_pred_J = model.predict(X_all) 
-    
-    # Convert J/m2/day to kWh/m2/yr
+def forecast_solar_energy(
+    df: pd.DataFrame,
+    model,
+    feature_cols: list,
+    label: str,
+    is_baseline: bool,
+    train_df: pd.DataFrame = None,
+) -> pd.DataFrame:
+    X_all    = df[feature_cols].values.astype(float)
+    y_pred_J = model.predict(X_all)
+
     H_annual = (y_pred_J / KWH_TO_J) * DAYS_PER_YEAR
-    
-    result = df[["lat", "lon", "rooftop_area_sq_m"]].copy()
-    
-    # PHASE 2: Apply the Rooftop Area mathematically!
+    result   = df[["lat", "lon", "rooftop_area_sq_m"]].copy()
+
     if is_baseline:
-        # Baseline assumes perfect unshaded sun (just like Quezon City study)
+        # Theoretical maximum — no shading or orientation correction.
         result[f"{label}_solar_kWh_yr"] = df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * PERF_RATIO
     else:
-        # FI-AdaBoost already predicted shaded sun, just apply area!
-        result[f"{label}_solar_kWh_yr"] = df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * PERF_RATIO
-        
+        # FI-AdaBoost: apply building-level corrections using train-set bounds
+        # so test-set statistics cannot leak into the scaling factors.
+        s_min = train_df["shading_factor"].min()
+        s_max = train_df["shading_factor"].max()
+        o_min = train_df["orientation_score"].min()
+        o_max = train_df["orientation_score"].max()
+
+        shade_corr  = 0.85 + 0.15 * ((df["shading_factor"]   - s_min) / (s_max - s_min + 1e-9)).clip(0, 1)
+        orient_corr = 0.85 + 0.15 * ((df["orientation_score"] - o_min) / (o_max - o_min + 1e-9)).clip(0, 1)
+
+        result[f"{label}_solar_kWh_yr"] = (
+            df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * shade_corr * orient_corr * PERF_RATIO
+        )
+
     return result
 
 def plot_standalone_feature_importance(fi_vals, feats):
@@ -244,12 +250,12 @@ def plot_standalone_feature_importance(fi_vals, feats):
     idx = np.argsort(fi_vals)
     sorted_vals = fi_vals[idx]
     sorted_labels = np.array(labels)[idx]
-    
+
     bars = plt.barh(sorted_labels, sorted_vals, color=C_FI, edgecolor="black", alpha=0.85)
     for bar, val in zip(bars, sorted_vals):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height()/2, f"{val*100:.1f}%", 
+        plt.text(val + 0.005, bar.get_y() + bar.get_height()/2, f"{val*100:.1f}%",
                  va="center", ha="left", fontsize=10, fontweight="bold")
-        
+
     plt.title("FI-AdaBoost Feature Importance (Spatial Geometry)", fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
     plt.xlim(0, max(sorted_vals) + 0.1)
@@ -257,6 +263,139 @@ def plot_standalone_feature_importance(fi_vals, feats):
     plt.gca().spines['right'].set_visible(False)
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "standalone_feature_importances.png"), dpi=300)
+    plt.close()
+
+
+# =============================================================================
+# RESULT EXPORTS
+# =============================================================================
+def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
+    rows = [
+        {"model": "AdaBoost (Baseline)", "target": "Raw GHI (J/m²/day)", **ada_m},
+        {"model": "FI-AdaBoost (Proposed)", "target": "Raw GHI (J/m²/day)", **fi_m},
+    ]
+    path = os.path.join(RESULTS_DIR, "metrics_summary.csv")
+    pd.DataFrame(rows).to_csv(path, index=False)
+    return path
+
+
+def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
+    merged = ada_fcast.merge(
+        fi_fcast[["lat", "lon", "fi_solar_kWh_yr"]],
+        on=["lat", "lon"],
+        how="left",
+    )
+    merged["difference_kWh_yr"] = merged["ada_solar_kWh_yr"] - merged["fi_solar_kWh_yr"]
+    path = os.path.join(RESULTS_DIR, "forecast_per_building.csv")
+    merged.to_csv(path, index=False)
+    return path
+
+
+def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 6))
+    for ax, y_true, y_pred, color, title in [
+        (axes[0], y_true_ada, y_pred_ada, C_ADA, "AdaBoost Baseline\n(Raw GHI)"),
+        (axes[1], y_true_fi,  y_pred_fi,  C_FI,  "FI-AdaBoost Proposed\n(Effective GHI)"),
+    ]:
+        ax.scatter(y_true, y_pred, alpha=0.4, s=18, color=color, edgecolors="none")
+        mn, mx = min(y_true.min(), y_pred.min()), max(y_true.max(), y_pred.max())
+        ax.plot([mn, mx], [mn, mx], "k--", linewidth=1.2, label="Perfect fit")
+        r2 = r2_score(y_true, y_pred)
+        ax.set_title(f"{title}\nR² = {r2:.4f}", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Actual (J/m²/day)", fontsize=10)
+        ax.set_ylabel("Predicted (J/m²/day)", fontsize=10)
+        ax.legend(fontsize=9)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.suptitle("Actual vs Predicted — Phase 1 ML Validation", fontsize=14, fontweight="bold", y=1.01)
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "actual_vs_predicted.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_residuals(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, y_true, y_pred, color, title in [
+        (axes[0], y_true_ada, y_pred_ada, C_ADA, "AdaBoost Baseline"),
+        (axes[1], y_true_fi,  y_pred_fi,  C_FI,  "FI-AdaBoost Proposed"),
+    ]:
+        residuals = y_true - y_pred
+        ax.scatter(y_pred, residuals, alpha=0.4, s=18, color=color, edgecolors="none")
+        ax.axhline(0, color="black", linewidth=1.2, linestyle="--")
+        ax.set_title(f"{title}\nResiduals", fontsize=12, fontweight="bold")
+        ax.set_xlabel("Predicted (J/m²/day)", fontsize=10)
+        ax.set_ylabel("Residual (Actual − Predicted)", fontsize=10)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.suptitle("Residual Plot — Phase 1 ML Validation", fontsize=14, fontweight="bold", y=1.01)
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "residuals.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_metrics_comparison(ada_m: dict, fi_m: dict):
+    metrics  = ["RMSE_J", "MAE_J", "R2"]
+    labels   = ["RMSE (J/m²/day)", "MAE (J/m²/day)", "R²"]
+    ada_vals = [ada_m[k] for k in metrics]
+    fi_vals  = [fi_m[k]  for k in metrics]
+
+    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+    for ax, label, av, fv in zip(axes, labels, ada_vals, fi_vals):
+        bars = ax.bar(["AdaBoost\n(Baseline)", "FI-AdaBoost\n(Proposed)"], [av, fv],
+                      color=[C_ADA, C_FI], edgecolor="black", alpha=0.85, width=0.5)
+        for bar, val in zip(bars, [av, fv]):
+            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
+                    f"{val:,.2f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
+        ax.set_title(label, fontsize=12, fontweight="bold")
+        ax.set_ylim(0, max(av, fv) * 1.18)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.suptitle("Model Performance Comparison — Phase 1 ML", fontsize=14, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "metrics_comparison.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
+    fig, axes = plt.subplots(1, 2, figsize=(14, 5))
+    for ax, fcast, col, color, title in [
+        (axes[0], ada_fcast, "ada_solar_kWh_yr", C_ADA, "AdaBoost Baseline\n(Theoretical)"),
+        (axes[1], fi_fcast,  "fi_solar_kWh_yr",  C_FI,  "FI-AdaBoost Proposed\n(Effective)"),
+    ]:
+        data = fcast[col].dropna()
+        ax.hist(data, bins=40, color=color, edgecolor="white", alpha=0.85)
+        ax.axvline(data.mean(), color="black", linestyle="--", linewidth=1.2, label=f"Mean: {data.mean():,.0f}")
+        ax.set_title(title, fontsize=12, fontweight="bold")
+        ax.set_xlabel("Solar Energy Yield (kWh/year)", fontsize=10)
+        ax.set_ylabel("Number of Buildings", fontsize=10)
+        ax.legend(fontsize=9)
+        ax.spines['top'].set_visible(False)
+        ax.spines['right'].set_visible(False)
+    plt.suptitle("Per-Building Solar Energy Yield Distribution — Phase 2 Forecast", fontsize=13, fontweight="bold")
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "energy_distribution.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+
+def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
+    ada_kwh = ada_fcast["ada_solar_kWh_yr"].sum()
+    fi_kwh  = fi_fcast["fi_solar_kWh_yr"].sum()
+
+    fig, ax = plt.subplots(figsize=(8, 5))
+    bars = ax.bar(["AdaBoost\n(Theoretical)", "FI-AdaBoost\n(Effective)"],
+                  [ada_kwh, fi_kwh], color=[C_ADA, C_FI], edgecolor="black", alpha=0.85, width=0.45)
+    for bar, val in zip(bars, [ada_kwh, fi_kwh]):
+        ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
+                f"{val:,.0f} kWh", ha="center", va="bottom", fontsize=11, fontweight="bold")
+    ax.set_ylabel("Total Solar Energy Yield (kWh/year)", fontsize=11)
+    ax.set_title("Total Rooftop Solar Potential — Davao City\nPhase 2 Energy Forecast Comparison",
+                 fontsize=13, fontweight="bold")
+    ax.set_ylim(0, max(ada_kwh, fi_kwh) * 1.18)
+    ax.yaxis.set_major_formatter(plt.FuncFormatter(lambda x, _: f"{x:,.0f}"))
+    ax.spines['top'].set_visible(False)
+    ax.spines['right'].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "total_energy_comparison.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
 # =============================================================================
@@ -268,9 +407,9 @@ def main():
     print("  AdaBoost (Baseline)  vs  FI-AdaBoost (Proposed)")
     print("=" * 74)
 
-    print("\n[1/5] Loading dataset & Engineering Targets...")
+    print("\n[1/5] Loading dataset …")
     df = load_dataset()
-    
+
     print("\n[2/5] 80/20 Random Train/Test Split …")
     train_df, test_df = random_split(df, test_size=0.20)
 
@@ -278,44 +417,69 @@ def main():
     X_base_te = test_df[BASELINE_FEATURES].values.astype(float)
     X_fi_tr   = train_df[FI_FEATURES].values.astype(float)
     X_fi_te   = test_df[FI_FEATURES].values.astype(float)
-    
-    # 🚨 THE FIX: Separate Targets for Separate Methodologies
-    y_base_tr = train_df["Target_Raw_J"].values.astype(float)
-    y_base_te = test_df["Target_Raw_J"].values.astype(float)
-    
-    y_fi_tr   = train_df["Target_Effective_J"].values.astype(float)
-    y_fi_te   = test_df["Target_Effective_J"].values.astype(float)
 
-    print("\n[3/5] PHASE 1: Training Machine Learning Models (Predicting J/m2)…")
-    ada = BaselineAdaBoost().fit(X_base_tr, y_base_tr)
-    fi  = FIAdaBoostRegressor().fit(X_fi_tr, y_fi_tr)
+    # Both models predict the same raw GHI target — fair comparison.
+    y_tr = train_df["Target_J"].values.astype(float)
+    y_te = test_df["Target_J"].values.astype(float)
 
-    print("\n[4/5] Evaluation …")
+    print("\n[3/5] PHASE 1: Training ML Models on the same GHI target …")
+    ada = BaselineAdaBoost().fit(X_base_tr, y_tr)
+    fi  = FIAdaBoostRegressor().fit(X_fi_tr, y_tr)
+
+    print("\n[4/5] Evaluation (same target — results are directly comparable) …")
     ada_te = ada.predict(X_base_te)
     fi_te  = fi.predict(X_fi_te)
-    
-    ada_test_m = compute_metrics(y_base_te, ada_te)
-    fi_test_m  = compute_metrics(y_fi_te, fi_te)
 
-    t2 = make_result_table(ada_test_m,  fi_test_m)
-    _print_table("Phase 1: ML Validation Results (Both get high R2!)", t2)
+    ada_test_m = compute_metrics(y_te, ada_te)
+    fi_test_m  = compute_metrics(y_te, fi_te)
 
-    print("\n[5/5] PHASE 2: Applying Math Equation for Energy Forecast (Area x Irradiance)…")
-    ada_fcast = forecast_solar_energy(df, ada, BASELINE_FEATURES, label="ada", is_baseline=True)
-    fi_fcast  = forecast_solar_energy(df, fi,  FI_FEATURES,       label="fi",  is_baseline=False)
+    t2 = make_result_table(ada_test_m, fi_test_m)
+    _print_table("Phase 1: ML Validation Results — same GHI target, fair comparison", t2)
+
+    print("\n[5/5] PHASE 2: Energy Forecast (Area × Irradiance, building corrections for FI) …")
+    ada_fcast = forecast_solar_energy(df, ada, BASELINE_FEATURES, label="ada", is_baseline=True,  train_df=train_df)
+    fi_fcast  = forecast_solar_energy(df, fi,  FI_FEATURES,       label="fi",  is_baseline=False, train_df=train_df)
 
     if not ada_fcast.empty:
-        print(f"  Total Potential (Baseline Theoretical): {ada_fcast['ada_solar_kWh_yr'].sum()/1e6:>8.2f} GWh/year")
-        print(f"  Total Potential (FI-AdaBoost Effective): {fi_fcast['fi_solar_kWh_yr'].sum()/1e6:>8.2f} GWh/year")
+        print(f"  Total Potential (Baseline — theoretical max):     {ada_fcast['ada_solar_kWh_yr'].sum():>18,.2f} kWh/year")
+        print(f"  Total Potential (FI-AdaBoost — with corrections): {fi_fcast['fi_solar_kWh_yr'].sum():>18,.2f} kWh/year")
 
     # Persist trained models for API usage and reuse.
     joblib.dump(ada, BASELINE_MODEL_FILE)
     joblib.dump(fi, FI_MODEL_FILE)
 
+    # ── Export results to disk ────────────────────────────────────────────────
+    print("\n[6/6] Saving results to disk…")
+
+    # CSVs
+    p_metrics  = save_metrics_csv(ada_test_m, fi_test_m)
+    p_forecast = save_forecast_csv(ada_fcast, fi_fcast)
+
+    # Plots
     plot_standalone_feature_importance(fi.feature_importances_, FI_FEATURES)
-    print(f"  Saved model  : {BASELINE_MODEL_FILE}")
-    print(f"  Saved model  : {FI_MODEL_FILE}")
-    print("\n[Done] Pipeline complete. Check 'results' folder for the Feature Importance Graph!\n")
+    plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
+    plot_residuals(y_te, ada_te, y_te, fi_te)
+    plot_metrics_comparison(ada_test_m, fi_test_m)
+    plot_energy_distribution(ada_fcast, fi_fcast)
+    plot_total_energy_comparison(ada_fcast, fi_fcast)
+
+    saved = [
+        ("CSV",  p_metrics),
+        ("CSV",  p_forecast),
+        ("Plot", os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
+        ("Plot", os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
+        ("Plot", os.path.join(RESULTS_DIR, "residuals.png")),
+        ("Plot", os.path.join(RESULTS_DIR, "metrics_comparison.png")),
+        ("Plot", os.path.join(RESULTS_DIR, "energy_distribution.png")),
+        ("Plot", os.path.join(RESULTS_DIR, "total_energy_comparison.png")),
+        ("Model", BASELINE_MODEL_FILE),
+        ("Model", FI_MODEL_FILE),
+    ]
+    print(f"\n  {'Type':<8}  File")
+    print(f"  {'─'*8}  {'─'*55}")
+    for kind, p in saved:
+        print(f"  {kind:<8}  {p}")
+    print("\n[Done] All results saved to 'results/' folder.\n")
 
 if __name__ == "__main__":
     main()

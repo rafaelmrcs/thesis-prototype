@@ -442,10 +442,10 @@ export function GlobalModelAnalytics() {
                     {cvMetrics.cv_fold_metrics.map((m) => (
                       <tr key={m.fold} className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">Fold {m.fold}</td>
-                        <td className="px-4 py-3 text-right">{m.baseline_rmse.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_rmse.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right">{m.baseline_mae.toFixed(2)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_mae.toFixed(2)}</td>
+                        <td className="px-4 py-3 text-right">{m.baseline_rmse.toFixed(5)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_rmse.toFixed(5)}</td>
+                        <td className="px-4 py-3 text-right">{m.baseline_mae.toFixed(5)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_mae.toFixed(5)}</td>
                         <td className="px-4 py-3 text-right">{(m.baseline_r2 * 100).toFixed(2)}%</td>
                         <td className="px-4 py-3 text-right font-semibold text-emerald-600">{(m.fi_r2 * 100).toFixed(2)}%</td>
                         <td className="px-4 py-3 text-right text-emerald-600">+{((m.fi_r2 - m.baseline_r2) * 100).toFixed(2)}%</td>
@@ -454,10 +454,10 @@ export function GlobalModelAnalytics() {
                     {/* Average row */}
                     <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
                       <td className="px-4 py-3">Average</td>
-                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.rmse.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.rmse.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.mae.toFixed(2)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.mae.toFixed(2)}</td>
+                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.rmse.toFixed(5)}</td>
+                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.rmse.toFixed(5)}</td>
+                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.mae.toFixed(5)}</td>
+                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.mae.toFixed(5)}</td>
                       <td className="px-4 py-3 text-right">{(cvMetrics.average_metrics.baseline.r2 * 100).toFixed(2)}%</td>
                       <td className="px-4 py-3 text-right text-emerald-600">{(cvMetrics.average_metrics.fiAdaBoost.r2 * 100).toFixed(2)}%</td>
                       <td className="px-4 py-3 text-right text-emerald-600">+{((cvMetrics.average_metrics.fiAdaBoost.r2 - cvMetrics.average_metrics.baseline.r2) * 100).toFixed(2)}%</td>
