@@ -355,6 +355,11 @@ class ModelContext:
                 "feature_engineering → data_integration"
             )
         df      = pd.read_csv(INTEGRATED_DATA_FILE)
+
+        # Compute log-transformed features (same transforms as model_training2.load_dataset)
+        df["shading_factor_log"] = np.log1p(df["shading_factor"] * 10)
+        df["SEI_norm_log"]       = np.log1p(df["SEI_norm"] * 100)
+
         required = [TARGET_J, "rooftop_area_sq_m"] + FI_FEATURES
         missing  = [c for c in required if c not in df.columns]
         if missing:
