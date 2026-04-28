@@ -6,6 +6,7 @@ import os
 from pathlib import Path
 
 import joblib
+import threading
 import numpy as np
 import pandas as pd
 import pvlib
@@ -17,7 +18,7 @@ from scipy.spatial import cKDTree
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
-from src.model_training2 import (
+from src.model_training import (
     BASELINE_FEATURES,
     FI_FEATURES,
     TARGET_J,
@@ -731,43 +732,87 @@ class ModelContext:
     # ── Startup ───────────────────────────────────────────────────────────────
 
     def ensure_loaded(self) -> None:
+        print("[1/6] Loading integrated dataset …", flush=True)
         self.df = self._load_dataset()
+        print(f"       Loaded {len(self.df)} rows", flush=True)
+        
+        print("[2/6] Building KD-tree for spatial queries …", flush=True)
         self._build_kd_tree()
+        print("       KD-tree built", flush=True)
 
         # Load canonical persisted models; fall back to training from the dataset.
+        print("[3/6] Loading FI-AdaBoost model …", flush=True)
         self.fi_model = None
         if FI_MODEL_FILE.exists():
-            loaded = self._load_model_file(FI_MODEL_FILE)
-            if loaded is not None and self._model_supports_feature_count(loaded, len(FI_FEATURES)):
-                self.fi_model = loaded
-
-        self.baseline_model = None
-        if BASELINE_MODEL_FILE.exists():
-            loaded = self._load_model_file(BASELINE_MODEL_FILE)
-            if loaded is not None and self._model_supports_feature_count(loaded, len(BASELINE_FEATURES)):
-                self.baseline_model = loaded
+            try:
+                loaded = self._load_model_file(FI_MODEL_FILE)
+                if loaded is not None and self._model_supports_feature_count(loaded, len(FI_FEATURES)):
+                    self.fi_model = loaded
+                    print("       Loaded from disk", flush=True)
+            except Exception as e:
+                print(f"       Failed to load: {e}, will retrain", flush=True)
 
         if self.fi_model is None:
-            print("Training FI-AdaBoost model from integrated_dataset.csv …")
+            print("       Training FI-AdaBoost model from dataset …", flush=True)
             self.fi_model = self._train_fi_model()
             joblib.dump(self.fi_model, FI_MODEL_FILE)
+            print("       Model trained and saved", flush=True)
+
+        print("[4/6] Loading Baseline AdaBoost model …", flush=True)
+        self.baseline_model = None
+        if BASELINE_MODEL_FILE.exists():
+            try:
+                loaded = self._load_model_file(BASELINE_MODEL_FILE)
+                if loaded is not None and self._model_supports_feature_count(loaded, len(BASELINE_FEATURES)):
+                    self.baseline_model = loaded
+                    print("       Loaded from disk", flush=True)
+            except Exception as e:
+                print(f"       Failed to load: {e}, will retrain", flush=True)
 
         if self.baseline_model is None:
-            print("Training Baseline AdaBoost model from integrated_dataset.csv …")
+            print("       Training Baseline AdaBoost model from dataset …", flush=True)
             self.baseline_model = self._train_baseline_model()
             joblib.dump(self.baseline_model, BASELINE_MODEL_FILE)
+            print("       Model trained and saved", flush=True)
 
+        print("[5/6] Computing global analytics …", flush=True)
         self._compute_global_analytics()
+        print("       Analytics computed", flush=True)
+        
+        print("[6/6] Loading CV metrics and training analytics …", flush=True)
         self._load_cv_metrics()
         self._compute_training_analytics()
+        print("       All metrics loaded", flush=True)
 
 
 ctx = ModelContext()
 
+# Start loading models in background so the server process can accept
+# connections quickly (Railway healthchecks expect the port to be bound).
+def _background_load() -> None:
+    try:
+        ctx.ensure_loaded()
+    except Exception as e:
+        print(f"Background model load failed: {e}", flush=True)
+
+threading.Thread(target=_background_load, daemon=True).start()
+
 
 @app.on_event("startup")
 def startup_event() -> None:
-    ctx.ensure_loaded()
+    try:
+        print("=" * 60, flush=True)
+        print("STARTING FI-ADABOOST API", flush=True)
+        print("=" * 60, flush=True)
+        ctx.ensure_loaded()
+        print("=" * 60, flush=True)
+        print("API STARTUP COMPLETE", flush=True)
+        print("=" * 60, flush=True)
+    except Exception as e:
+        print(f"ERROR during startup: {e}", flush=True)
+        import traceback
+        traceback.print_exc()
+        raise
 
 
 # ── Helpers ───────────────────────────────────────────────────────────────────
