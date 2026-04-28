@@ -2,10 +2,10 @@ FROM node:20-alpine AS builder
 
 WORKDIR /app
 
-COPY package*.json ./
+COPY Solar_Energy_Potential_Forecasting_Prototype/package*.json ./
 RUN npm ci
 
-COPY . .
+COPY Solar_Energy_Potential_Forecasting_Prototype/ .
 
 ARG VITE_BACKEND_URL
 ENV VITE_BACKEND_URL=$VITE_BACKEND_URL
@@ -16,6 +16,6 @@ RUN npm run build
 FROM nginx:alpine
 
 COPY --from=builder /app/dist /usr/share/nginx/html
-COPY nginx/default.conf.template /etc/nginx/templates/default.conf.template
+COPY Solar_Energy_Potential_Forecasting_Prototype/nginx/default.conf.template /etc/nginx/templates/default.conf.template
 
 CMD ["sh", "-c", "envsubst '$PORT' < /etc/nginx/templates/default.conf.template > /etc/nginx/conf.d/default.conf && nginx -g 'daemon off;'"]
