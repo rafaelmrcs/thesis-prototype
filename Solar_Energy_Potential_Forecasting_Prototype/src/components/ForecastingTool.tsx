@@ -19,6 +19,50 @@ const defaultIcon = L.icon({
   iconAnchor: [12, 41],
 });
 
+const DEFAULT_MAP_CENTER: [number, number] = [7.0731, 125.6128];
+const DEFAULT_COORDINATES = {
+  lat: DEFAULT_MAP_CENTER[0].toFixed(6),
+  lng: DEFAULT_MAP_CENTER[1].toFixed(6),
+};
+
+function formatCoordinate(value: number): string {
+  return value.toFixed(6);
+}
+
+function parseCoordinatePair(input: string): { lat: number; lng: number } | { error: string } | null {
+  const trimmed = input.trim();
+  const parts = trimmed.split(",");
+
+  if (parts.length !== 2) {
+    return null;
+  }
+
+  const [latPart, lngPart] = parts.map((part) => part.trim());
+  const coordinateToken = /^[+-]?(?:\d+(?:\.\d+)?|\.\d+)$/;
+  const latLooksNumeric = /^[+-]?(?:\d|\.\d)/.test(latPart);
+  const lngLooksNumeric = /^[+-]?(?:\d|\.\d)/.test(lngPart);
+
+  if (!latLooksNumeric && !lngLooksNumeric) {
+    return null;
+  }
+
+  if (!coordinateToken.test(latPart) || !coordinateToken.test(lngPart)) {
+    return {
+      error: 'Enter coordinates as "latitude, longitude" using decimal values, for example 7.073100, 125.612800.',
+    };
+  }
+
+  const lat = Number(latPart);
+  const lng = Number(lngPart);
+  if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
+    return {
+      error: "Coordinates must use latitude between -90 and 90 and longitude between -180 and 180.",
+    };
+  }
+
+  return { lat, lng };
+}
+
 
 interface PredictionResult {
   solarPotential: number;
@@ -59,10 +103,13 @@ interface ForecastingToolProps {
 
 export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const [address, setAddress] = useState('Davao City, Philippines');
-  const [coordinates, setCoordinates] = useState({ lat: '7.0731', lng: '125.6128' });
+  const [coordinates, setCoordinates] = useState(DEFAULT_COORDINATES);
   const [isLoading, setIsLoading] = useState(false);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const latValue = Number(coordinates.lat);
+  const lngValue = Number(coordinates.lng);
+  const hasValidCoordinates = Number.isFinite(latValue) && Number.isFinite(lngValue);
 
   const panelEff = 0.192;
   const performanceRatio = 0.78;
@@ -79,53 +126,60 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   }, [coordinates.lat, coordinates.lng]);
 
   useEffect(() => {
-    const lat = Number(coordinates.lat);
-    const lng = Number(coordinates.lng);
-    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-      onCoordinatesChange?.(lat, lng);
+    if (hasValidCoordinates) {
+      onCoordinatesChange?.(latValue, lngValue);
     }
-  }, [coordinates.lat, coordinates.lng, onCoordinatesChange]);
+  }, [hasValidCoordinates, latValue, lngValue, onCoordinatesChange]);
+
+  const applyCoordinates = (lat: number, lng: number, nextAddress?: string) => {
+    const formattedLat = formatCoordinate(lat);
+    const formattedLng = formatCoordinate(lng);
+    setCoordinates({ lat: formattedLat, lng: formattedLng });
+    setAddress(nextAddress ?? `${formattedLat}, ${formattedLng}`);
+  };
 
   const handleLocateMe = () => {
     setIsLoading(true);
-    // Simulate geolocation
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
-          setCoordinates({ 
-            lat: position.coords.latitude.toFixed(6), 
-            lng: position.coords.longitude.toFixed(6) 
-          });
-          setAddress(`${position.coords.latitude.toFixed(6)}, ${position.coords.longitude.toFixed(6)}`);
+          applyCoordinates(position.coords.latitude, position.coords.longitude);
           setIsLoading(false);
         },
         () => {
-          // Fallback to Davao City if geolocation fails
-          setCoordinates({ lat: '7.0731', lng: '125.6128' });
-          setAddress('Davao City, Philippines');
+          applyCoordinates(DEFAULT_MAP_CENTER[0], DEFAULT_MAP_CENTER[1], 'Davao City, Philippines');
           setIsLoading(false);
         }
       );
     } else {
-      setCoordinates({ lat: '7.0731', lng: '125.6128' });
-      setAddress('Davao City, Philippines');
+      applyCoordinates(DEFAULT_MAP_CENTER[0], DEFAULT_MAP_CENTER[1], 'Davao City, Philippines');
       setIsLoading(false);
     }
   };
 
   const handleSearchAddress = async () => {
-    if (!address.trim()) {
-      setApiError('Please enter an address to search.');
+    const trimmedAddress = address.trim();
+    if (!trimmedAddress) {
+      setApiError('Please enter an address or coordinates to search.');
+      return;
+    }
+
+    const parsedCoordinates = parseCoordinatePair(trimmedAddress);
+    if (parsedCoordinates && "error" in parsedCoordinates) {
+      setApiError(parsedCoordinates.error);
+      return;
+    }
+
+    if (parsedCoordinates) {
+      applyCoordinates(parsedCoordinates.lat, parsedCoordinates.lng);
+      setApiError(null);
       return;
     }
 
     setIsLoading(true);
     setApiError(null);
-
     try {
-      // Use Nominatim (OpenStreetMap) geocoding API
-      // Bias search to Davao City area
-      const query = encodeURIComponent(`${address}, Davao City, Philippines`);
+      const query = encodeURIComponent(`${trimmedAddress}, Davao City, Philippines`);
       const response = await fetch(
         `https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1&bounded=1&viewbox=125.3,6.8,126.0,7.35`,
         {
@@ -148,12 +202,11 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
       }
 
       const location = results[0];
-      const lat = parseFloat(location.lat).toFixed(6);
-      const lng = parseFloat(location.lon).toFixed(6);
+      const lat = Number(location.lat);
+      const lng = Number(location.lon);
 
-      setCoordinates({ lat, lng });
-      setAddress(location.display_name);
-      console.log('📍 Geocoded address:', location.display_name, '→', lat, lng);
+      applyCoordinates(lat, lng, location.display_name);
+      console.log('📍 Geocoded address:', location.display_name, '→', formatCoordinate(lat), formatCoordinate(lng));
 
     } catch (error) {
       console.error('Geocoding error:', error);
@@ -164,15 +217,12 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   };
 
   const handlePredict = async () => {
-    const lat = Number(coordinates.lat);
-    const lng = Number(coordinates.lng);
-
-    if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+    if (!hasValidCoordinates) {
       setApiError('Please provide valid latitude and longitude values.');
       return;
     }
 
-    console.log('🎯 Predicting for coordinates:', { lat, lng });
+    console.log('🎯 Predicting for coordinates:', { lat: latValue, lng: lngValue });
 
     setApiError(null);
     setIsLoading(true);
@@ -183,7 +233,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ lat, lng }),
+        body: JSON.stringify({ lat: latValue, lng: lngValue }),
       });
       console.log('✅ Prediction result:', result);
       setPrediction(result);
@@ -240,17 +290,17 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             Select Your Location
           </CardTitle>
           <CardDescription>
-            Enter your exact address or click on the map to pin your location
+            Enter an address, paste coordinates, or click on the map to pin your location
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-4">
           {/* Address Input */}
           <div className="space-y-2">
-            <Label htmlFor="address" className="text-sm">Exact Address or Coordinates</Label>
+            <Label htmlFor="address" className="text-sm">Address or "latitude, longitude"</Label>
             <div className="flex gap-2">
               <Input
                 id="address"
-                placeholder="e.g., SM City Davao, Matina Town Square, or click on map"
+                placeholder='e.g., SM City Davao or 7.073100, 125.612800'
                 value={address}
                 onChange={(e) => setAddress(e.target.value)}
                 onKeyDown={(e) => {
@@ -265,7 +315,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 size="icon"
                 onClick={handleSearchAddress}
                 disabled={isLoading || !address.trim()}
-                title="Search for this address"
+                title="Search this address or use the typed coordinates"
                 className="shrink-0 bg-blue-600 hover:bg-blue-700"
               >
                 <Search className="w-4 h-4" />
@@ -291,6 +341,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 id="latitude"
                 placeholder="e.g., 7.0731"
                 value={coordinates.lat}
+                inputMode="decimal"
                 onChange={(e) => setCoordinates({ ...coordinates, lat: e.target.value })}
               />
             </div>
@@ -300,6 +351,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 id="longitude"
                 placeholder="e.g., 125.6128"
                 value={coordinates.lng}
+                inputMode="decimal"
                 onChange={(e) => setCoordinates({ ...coordinates, lng: e.target.value })}
               />
             </div>
@@ -311,15 +363,10 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
  {/* Map Picker */}
 <div className="rounded-lg overflow-hidden border-2 border-blue-300 shadow-lg h-64 sm:h-96 md:h-[500px] relative z-0">
   <MapContainer
-    center={[7.0731, 125.6128] as [number, number]}
+    center={DEFAULT_MAP_CENTER}
     zoom={14}
     minZoom={12}
     maxZoom={18}
-    maxBounds={[
-      [6.8, 125.3], // Southwest corner of bounds
-      [7.35, 126.0]  // Northeast corner of bounds
-    ]}
-    maxBoundsViscosity={1.0}
     style={{ height: "100%", width: "100%", background: "#e5e7eb" }}
     scrollWheelZoom
   >
@@ -330,18 +377,15 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
 
     <ClickToSetLocation
       onPick={(lat, lng) => {
-        const newLat = lat.toFixed(6);
-        const newLng = lng.toFixed(6);
-        setCoordinates({ lat: newLat, lng: newLng });
-        setAddress(`${newLat}, ${newLng}`);
+        applyCoordinates(lat, lng);
       }}
     />
 
-    {coordinates.lat && coordinates.lng && (
+    {hasValidCoordinates && (
       <>
-        <RecenterMap lat={Number(coordinates.lat)} lng={Number(coordinates.lng)} />
+        <RecenterMap lat={latValue} lng={lngValue} />
         <Marker
-          position={[Number(coordinates.lat), Number(coordinates.lng)]}
+          position={[latValue, lngValue]}
           icon={defaultIcon}
         />
       </>
@@ -374,7 +418,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
           <Button
             className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg"
             onClick={handlePredict}
-            disabled={isLoading || (!coordinates.lat || !coordinates.lng)}
+            disabled={isLoading || !hasValidCoordinates}
             size="lg"
           >
             {isLoading ? (

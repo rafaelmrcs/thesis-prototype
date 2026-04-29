@@ -66,7 +66,7 @@ NASA_LOOKBACK_DAYS = int(os.getenv("NASA_LOOKBACK_DAYS", "365"))
 NASA_LAG_DAYS = int(os.getenv("NASA_LAG_DAYS", "7"))
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OVERPASS_TIMEOUT_SEC = 18
-OVERPASS_RADIUS_SEQUENCE_METERS = (150, 300, 500)
+OVERPASS_RADIUS_SEQUENCE_METERS = (150, 300)
 REQUEST_USER_AGENT = "FI-AdaBoost-Solar-Potential/2.1"
 DEFAULT_CORS_ORIGIN_REGEX = (
     r"http://([a-zA-Z0-9\-\.]+):5173"
