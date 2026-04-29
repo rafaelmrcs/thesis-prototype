@@ -1,8 +1,8 @@
 services:
   backend:
     build:
-      context: ./FIAdaBoost
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: FIAdaBoost/Dockerfile
     container_name: fiadaboost-backend
     working_dir: /app
     volumes:
@@ -13,8 +13,8 @@ services:
 
   frontend:
     build:
-      context: ./Solar_Energy_Potential_Forecasting_Prototype
-      dockerfile: Dockerfile
+      context: .
+      dockerfile: Solar_Energy_Potential_Forecasting_Prototype/Dockerfile
       args:
         - VITE_BACKEND_URL=http://localhost:8501
     container_name: solar-energy-frontend
