@@ -3,6 +3,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Button } from './ui/button';
 import { RefreshCw } from 'lucide-react';
 import { fetchBackendJson } from '../lib/backend';
+import { formatExact, formatResultsErrorMetric, formatRawR2, formatPercent } from '../lib/formatting';
 
 interface ModelAnalyticsProps {
   lat?: number;
@@ -110,14 +111,14 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                 <div className="rounded-xl border-2 border-slate-200 bg-white p-4 shadow-sm">
                   <p className="text-xs text-slate-500 uppercase tracking-wide">Baseline AdaBoost</p>
                   <p className="mt-1 text-3xl font-semibold text-slate-700">
-                    {liveComparison.baseline.solarPotential.toFixed(3)}
+                    {formatExact(liveComparison.baseline.solarPotential, 6)}
                   </p>
                   <p className="text-xs text-slate-400">kWh/m²/day (sky irradiance — geometry-blind)</p>
                 </div>
                 <div className="rounded-xl border-2 border-orange-200 bg-white p-4 shadow-sm">
                   <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost</p>
                   <p className="mt-1 text-3xl font-semibold text-orange-600">
-                    {liveComparison.fiAdaBoost.solarPotential.toFixed(3)}
+                    {formatExact(liveComparison.fiAdaBoost.solarPotential, 6)}
                   </p>
                   <p className="text-xs text-slate-400">kWh/m²/day (geometry-adjusted for this rooftop)</p>
                 </div>
@@ -125,11 +126,11 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   <p className="text-xs opacity-80 uppercase tracking-wide">Difference</p>
                   <p className="mt-1 text-3xl font-semibold">
                     {liveComparison.improvement.solarPotentialDiff >= 0 ? '+' : ''}
-                    {liveComparison.improvement.solarPotentialDiff.toFixed(3)}
+                    {formatExact(liveComparison.improvement.solarPotentialDiff, 6)}
                   </p>
                   <p className="text-xs opacity-70">
                     ({liveComparison.improvement.solarPotentialImprovementPct >= 0 ? '+' : ''}
-                    {liveComparison.improvement.solarPotentialImprovementPct.toFixed(2)}%)
+                    {formatPercent(liveComparison.improvement.solarPotentialImprovementPct, 6)})
                   </p>
                 </div>
               </div>
@@ -137,7 +138,7 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
               <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
                 <p className="text-xs text-slate-500 uppercase tracking-wide">Prediction Confidence</p>
                 <p className="mt-1 text-3xl font-semibold text-sky-700">
-                  {liveComparison.improvement.confidenceLevel.toFixed(1)}%
+                  {formatPercent(liveComparison.improvement.confidenceLevel, 1)}
                 </p>
                 <p className="text-xs text-slate-400">Based on proximity to training data and model agreement</p>
               </div>
@@ -148,18 +149,18 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <div>
                       <p className="text-xs text-slate-500">RMSE (kWh/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.rmse.toFixed(5)}</p>
-                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.rmse.toFixed(5)}</p>
+                      <p className="text-sm text-slate-700">Baseline: {formatExact(liveComparison.performanceMetricsComparison.baseline.rmse, 6)}</p>
+                      <p className="text-sm text-orange-600">FI: {formatExact(liveComparison.performanceMetricsComparison.fiAdaBoost.rmse, 6)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">MAE (kWh/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.mae.toFixed(5)}</p>
-                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.mae.toFixed(5)}</p>
+                      <p className="text-sm text-slate-700">Baseline: {formatExact(liveComparison.performanceMetricsComparison.baseline.mae, 6)}</p>
+                      <p className="text-sm text-orange-600">FI: {formatExact(liveComparison.performanceMetricsComparison.fiAdaBoost.mae, 6)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">R²</p>
-                      <p className="text-sm text-slate-700">Baseline: {liveComparison.performanceMetricsComparison.baseline.r2.toFixed(4)}</p>
-                      <p className="text-sm text-orange-600">FI: {liveComparison.performanceMetricsComparison.fiAdaBoost.r2.toFixed(4)}</p>
+                      <p className="text-sm text-slate-700">Baseline: {formatRawR2(liveComparison.performanceMetricsComparison.baseline.r2)}</p>
+                      <p className="text-sm text-orange-600">FI: {formatRawR2(liveComparison.performanceMetricsComparison.fiAdaBoost.r2)}</p>
                     </div>
                   </div>
                 </div>
@@ -183,15 +184,15 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
             </CardDescription>
           </CardHeader>
           <CardContent>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
-              <SnapshotTile label="Rooftop Area" value={`${liveComparison.fiAdaBoost.rooftopArea.toFixed(1)} m²`} />
-              <SnapshotTile label="Solar Exposure Index" value={liveComparison.fiAdaBoost.solarExposureIndex.toFixed(3)} />
-              <SnapshotTile label="Sunshine Hours" value={`${liveComparison.fiAdaBoost.sunshineHours.toFixed(1)} hrs/day`} />
-              <SnapshotTile label="Cloud Cover" value={`${liveComparison.fiAdaBoost.cloudCover.toFixed(1)}%`} />
-              <SnapshotTile label="Temperature" value={`${liveComparison.fiAdaBoost.temperature.toFixed(1)}°C`} />
-              <SnapshotTile label="Humidity" value={`${liveComparison.fiAdaBoost.humidity.toFixed(1)}%`} />
+              <div className="grid grid-cols-2 gap-4 sm:grid-cols-4">
+              <SnapshotTile label="Rooftop Area" value={`${formatExact(liveComparison.fiAdaBoost.rooftopArea, 1)} m²`} />
+              <SnapshotTile label="Solar Exposure Index" value={formatExact(liveComparison.fiAdaBoost.solarExposureIndex, 6)} />
+              <SnapshotTile label="Sunshine Hours" value={`${formatExact(liveComparison.fiAdaBoost.sunshineHours, 1)} hrs/day`} />
+              <SnapshotTile label="Cloud Cover" value={`${formatPercent(liveComparison.fiAdaBoost.cloudCover, 1)}`} />
+              <SnapshotTile label="Temperature" value={`${formatExact(liveComparison.fiAdaBoost.temperature, 1)}°C`} />
+              <SnapshotTile label="Humidity" value={`${formatPercent(liveComparison.fiAdaBoost.humidity, 1)}`} />
               <SnapshotTile label="Orientation" value={liveComparison.fiAdaBoost.orientation} />
-              <SnapshotTile label="Azimuth" value={`${liveComparison.fiAdaBoost.azimuth.toFixed(1)}°`} />
+              <SnapshotTile label="Azimuth" value={`${formatExact(liveComparison.fiAdaBoost.azimuth, 1)}°`} />
             </div>
           </CardContent>
         </Card>
