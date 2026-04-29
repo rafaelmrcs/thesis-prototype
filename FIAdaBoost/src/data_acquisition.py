@@ -26,7 +26,7 @@ def get_city_boundary(place_name: str) -> gpd.GeoDataFrame:
     return gdf
 
 
-def sample_random_points_in_polygon(polygon, n_points: int = 3000,
+def sample_random_points_in_polygon(polygon, n_points: int = 10000,
                                     seed: int = 42) -> gpd.GeoDataFrame:
     """
     Generate n_points uniformly distributed random coordinates inside the
@@ -90,7 +90,7 @@ def extract_series(js: dict, param: str) -> pd.Series:
 def fetch_nasa_baseline_spatial(
         place_name: str  = "Davao City, Philippines",
         year:       str  = "2024",
-        n_points:   int  = 3000,
+        n_points:   int  = 10000,
         seed:       int  = 42,
         sleep_s:    float = 0.2,
 ) -> None:
@@ -228,7 +228,7 @@ if __name__ == "__main__":
     fetch_nasa_baseline_spatial(
         place_name="Davao City, Philippines",
         year="2024",
-        n_points=3000,
+        n_points=10000,
         seed=42,
     )
 
