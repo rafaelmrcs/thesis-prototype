@@ -80,6 +80,28 @@ interface CVMetricsData {
   };
 }
 
+const KWH_TO_J = 3_600_000;
+
+function formatExact(value: number, fractionDigits = 6): string {
+  return value.toLocaleString('en-US', {
+    minimumFractionDigits: fractionDigits,
+    maximumFractionDigits: fractionDigits,
+    useGrouping: false,
+  });
+}
+
+function formatResultsErrorMetric(valueInKwh: number): string {
+  return formatExact(valueInKwh * KWH_TO_J, 6);
+}
+
+function formatRawR2(value: number): string {
+  return formatExact(value, 6);
+}
+
+function formatPercent(value: number, fractionDigits = 6): string {
+  return `${formatExact(value, fractionDigits)}%`;
+}
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 export function GlobalModelAnalytics() {
@@ -113,8 +135,16 @@ export function GlobalModelAnalytics() {
 
   const errorMetricsChartData = mc
     ? [
-        { metric: 'RMSE', baseline: mc.baseline.rmse, fiAdaBoost: mc.fiAdaBoost.rmse },
-        { metric: 'MAE',  baseline: mc.baseline.mae,  fiAdaBoost: mc.fiAdaBoost.mae  },
+        {
+          metric: 'RMSE',
+          baseline: mc.baseline.rmse * KWH_TO_J,
+          fiAdaBoost: mc.fiAdaBoost.rmse * KWH_TO_J,
+        },
+        {
+          metric: 'MAE',
+          baseline: mc.baseline.mae * KWH_TO_J,
+          fiAdaBoost: mc.fiAdaBoost.mae * KWH_TO_J,
+        },
       ]
     : [];
 
@@ -176,19 +206,19 @@ export function GlobalModelAnalytics() {
               <section>
                 <h3 className="mb-1 text-lg font-semibold">A. Metrics Comparison</h3>
                 <p className="mb-4 text-sm text-slate-500">
-                  Error metrics (lower is better) and R² as percentage (higher is better). Shown on separate axes so R² isn't dwarfed by RMSE/MAE.
+                  RMSE and MAE below reflect the saved `RMSE_J` and `MAE_J` values from `results/metrics_summary.csv`. R² is shown separately to preserve precision.
                 </p>
                 <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
                   <div>
                     <p className="mb-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
-                      Error Metrics — lower is better
+                      Error Metrics (J/m²/day) — lower is better
                     </p>
                     <ResponsiveContainer width="100%" height={280}>
                       <BarChart data={errorMetricsChartData} barCategoryGap="35%">
                         <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                         <XAxis dataKey="metric" stroke="#64748b" />
                         <YAxis stroke="#64748b" />
-                        <Tooltip formatter={(v: number | string) => Number(v).toFixed(2)} />
+                        <Tooltip formatter={(v: number | string) => formatExact(Number(v), 6)} />
                         <Legend />
                         <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#94a3b8" radius={[8, 8, 0, 0]} />
                         <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
@@ -208,7 +238,7 @@ export function GlobalModelAnalytics() {
                           domain={([dataMin]: [number, number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
                           tickFormatter={(v: number) => `${v}%`}
                         />
-                        <Tooltip formatter={(v: number | string) => `${Number(v).toFixed(2)}%`} />
+                        <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
                         <Legend />
                         <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#94a3b8" radius={[8, 8, 0, 0]} />
                         <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
@@ -224,21 +254,21 @@ export function GlobalModelAnalytics() {
                 <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                   <ImprovementCard
                     label={mc.rmseImprovementPct >= 0 ? 'RMSE reduced by' : 'RMSE increased by'}
-                    value={`${Math.abs(mc.rmseImprovementPct).toFixed(1)}%`}
+                    value={formatPercent(Math.abs(mc.rmseImprovementPct), 6)}
                     sub="Lower root-mean-square error"
                     positive={mc.rmseImprovementPct >= 0}
                     icon={<TrendingDown className="h-4 w-4" />}
                   />
                   <ImprovementCard
                     label={mc.maeImprovementPct >= 0 ? 'MAE reduced by' : 'MAE increased by'}
-                    value={`${Math.abs(mc.maeImprovementPct).toFixed(1)}%`}
+                    value={formatPercent(Math.abs(mc.maeImprovementPct), 6)}
                     sub="Lower mean absolute error"
                     positive={mc.maeImprovementPct >= 0}
                     icon={<TrendingDown className="h-4 w-4" />}
                   />
                   <ImprovementCard
                     label={mc.r2ImprovementPct >= 0 ? 'R² increased by' : 'R² decreased by'}
-                    value={`${Math.abs(mc.r2ImprovementPct).toFixed(2)}%`}
+                    value={formatPercent(Math.abs(mc.r2ImprovementPct), 6)}
                     sub="Higher explained variance"
                     positive={mc.r2ImprovementPct >= 0}
                     icon={<TrendingUp className="h-4 w-4" />}
@@ -262,32 +292,32 @@ export function GlobalModelAnalytics() {
                     <tbody>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">RMSE</td>
-                        <td className="px-4 py-3 text-right">{mc.baseline.rmse.toFixed(5)}</td>
+                        <td className="px-4 py-3 text-right">{formatResultsErrorMetric(mc.baseline.rmse)}</td>
                         <td className={`px-4 py-3 text-right font-semibold ${mc.rmseImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {mc.fiAdaBoost.rmse.toFixed(5)}
+                          {formatResultsErrorMetric(mc.fiAdaBoost.rmse)}
                         </td>
                         <td className={`px-4 py-3 text-right ${mc.rmseImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {mc.rmseImprovementPct >= 0 ? '↓' : '↑'} {Math.abs(mc.rmseImprovementPct).toFixed(1)}%
+                          {mc.rmseImprovementPct >= 0 ? '↓' : '↑'} {formatPercent(Math.abs(mc.rmseImprovementPct), 6)}
                         </td>
                       </tr>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">MAE</td>
-                        <td className="px-4 py-3 text-right">{mc.baseline.mae.toFixed(5)}</td>
+                        <td className="px-4 py-3 text-right">{formatResultsErrorMetric(mc.baseline.mae)}</td>
                         <td className={`px-4 py-3 text-right font-semibold ${mc.maeImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {mc.fiAdaBoost.mae.toFixed(5)}
+                          {formatResultsErrorMetric(mc.fiAdaBoost.mae)}
                         </td>
                         <td className={`px-4 py-3 text-right ${mc.maeImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
-                          {mc.maeImprovementPct >= 0 ? '↓' : '↑'} {Math.abs(mc.maeImprovementPct).toFixed(1)}%
+                          {mc.maeImprovementPct >= 0 ? '↓' : '↑'} {formatPercent(Math.abs(mc.maeImprovementPct), 6)}
                         </td>
                       </tr>
                       <tr className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">R²</td>
-                        <td className="px-4 py-3 text-right">{(mc.baseline.r2 * 100).toFixed(2)}%</td>
+                        <td className="px-4 py-3 text-right">{formatRawR2(mc.baseline.r2)}</td>
                         <td className={`px-4 py-3 text-right font-semibold ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
-                          {(mc.fiAdaBoost.r2 * 100).toFixed(2)}%
+                          {formatRawR2(mc.fiAdaBoost.r2)}
                         </td>
                         <td className={`px-4 py-3 text-right ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
-                          {mc.r2ImprovementPct >= 0 ? '↑' : '↓'} {Math.abs(mc.r2ImprovementPct).toFixed(2)}%
+                          {mc.r2ImprovementPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(mc.r2ImprovementPct), 6)}
                         </td>
                       </tr>
                     </tbody>
@@ -391,10 +421,10 @@ export function GlobalModelAnalytics() {
             {cvChartData.length > 0 ? (
               <ResponsiveContainer width="100%" height={320}>
                 <LineChart data={cvChartData}>
-                  <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                  <XAxis dataKey="fold" stroke="#64748b" />
-                  <YAxis stroke="#64748b" />
-                  <Tooltip formatter={(v: number | string) => Number(v).toFixed(2)} />
+                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+                    <XAxis dataKey="fold" stroke="#64748b" />
+                    <YAxis stroke="#64748b" />
+                  <Tooltip formatter={(v: number | string) => formatExact(Number(v), 6)} />
                   <Legend />
                   <Line
                     type="monotone"
@@ -442,25 +472,25 @@ export function GlobalModelAnalytics() {
                     {cvMetrics.cv_fold_metrics.map((m) => (
                       <tr key={m.fold} className="border-t border-slate-200 hover:bg-slate-50">
                         <td className="px-4 py-3 font-medium">Fold {m.fold}</td>
-                        <td className="px-4 py-3 text-right">{m.baseline_rmse.toFixed(5)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_rmse.toFixed(5)}</td>
-                        <td className="px-4 py-3 text-right">{m.baseline_mae.toFixed(5)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{m.fi_mae.toFixed(5)}</td>
-                        <td className="px-4 py-3 text-right">{(m.baseline_r2 * 100).toFixed(2)}%</td>
-                        <td className="px-4 py-3 text-right font-semibold text-emerald-600">{(m.fi_r2 * 100).toFixed(2)}%</td>
-                        <td className="px-4 py-3 text-right text-emerald-600">+{((m.fi_r2 - m.baseline_r2) * 100).toFixed(2)}%</td>
+                        <td className="px-4 py-3 text-right">{formatExact(m.baseline_rmse, 6)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(m.fi_rmse, 6)}</td>
+                        <td className="px-4 py-3 text-right">{formatExact(m.baseline_mae, 6)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(m.fi_mae, 6)}</td>
+                        <td className="px-4 py-3 text-right">{formatRawR2(m.baseline_r2)}</td>
+                        <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatRawR2(m.fi_r2)}</td>
+                        <td className="px-4 py-3 text-right text-emerald-600">+{formatPercent((m.fi_r2 - m.baseline_r2) * 100, 6)}</td>
                       </tr>
                     ))}
                     {/* Average row */}
                     <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
                       <td className="px-4 py-3">Average</td>
-                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.rmse.toFixed(5)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.rmse.toFixed(5)}</td>
-                      <td className="px-4 py-3 text-right">{cvMetrics.average_metrics.baseline.mae.toFixed(5)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{cvMetrics.average_metrics.fiAdaBoost.mae.toFixed(5)}</td>
-                      <td className="px-4 py-3 text-right">{(cvMetrics.average_metrics.baseline.r2 * 100).toFixed(2)}%</td>
-                      <td className="px-4 py-3 text-right text-emerald-600">{(cvMetrics.average_metrics.fiAdaBoost.r2 * 100).toFixed(2)}%</td>
-                      <td className="px-4 py-3 text-right text-emerald-600">+{((cvMetrics.average_metrics.fiAdaBoost.r2 - cvMetrics.average_metrics.baseline.r2) * 100).toFixed(2)}%</td>
+                      <td className="px-4 py-3 text-right">{formatExact(cvMetrics.average_metrics.baseline.rmse, 6)}</td>
+                      <td className="px-4 py-3 text-right text-orange-600">{formatExact(cvMetrics.average_metrics.fiAdaBoost.rmse, 6)}</td>
+                      <td className="px-4 py-3 text-right">{formatExact(cvMetrics.average_metrics.baseline.mae, 6)}</td>
+                      <td className="px-4 py-3 text-right text-orange-600">{formatExact(cvMetrics.average_metrics.fiAdaBoost.mae, 6)}</td>
+                      <td className="px-4 py-3 text-right">{formatRawR2(cvMetrics.average_metrics.baseline.r2)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-600">{formatRawR2(cvMetrics.average_metrics.fiAdaBoost.r2)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-600">+{formatPercent((cvMetrics.average_metrics.fiAdaBoost.r2 - cvMetrics.average_metrics.baseline.r2) * 100, 6)}</td>
                     </tr>
                   </tbody>
                 </table>
