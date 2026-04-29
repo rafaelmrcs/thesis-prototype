@@ -265,7 +265,10 @@ curl -X POST http://localhost:8501/predict \
 - `CORS_ORIGIN_REGEX`
 - `NASA_LOOKBACK_DAYS`
 - `NASA_LAG_DAYS`
-- `OVERPASS_RADIUS_METERS`
+- `OVERPASS_API_URLS`
+
+`OVERPASS_API_URLS` accepts a comma-separated list of Overpass API endpoints. If unset, the backend
+tries multiple public mirrors in order for live rooftop lookup.
 
 ### Frontend
 
@@ -303,7 +306,8 @@ Recommended service configuration:
 
 - Live prediction requires network access.
 - OSM building lookup may fail for coordinates with no mapped nearby building footprint.
-- NASA POWER and Overpass availability directly affect prediction success.
+- NASA POWER availability directly affects prediction success.
+- Live rooftop lookup now fails over across multiple public Overpass API mirrors, but prediction can still fail if all configured Overpass endpoints are unavailable.
 - The study is centered on Davao City and the saved training artifacts reflect that coverage.
 - The live API uses the trained models, but prediction quality still depends on upstream live data quality and map coverage.
 

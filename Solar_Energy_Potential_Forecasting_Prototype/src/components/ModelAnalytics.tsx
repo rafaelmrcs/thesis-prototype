@@ -39,6 +39,13 @@ interface ComparisonData {
   };
 }
 
+function mapLiveComparisonError(message: string): string {
+  if (/Live rooftop lookup is temporarily unavailable because all configured Overpass endpoints failed/i.test(message)) {
+    return 'Live OpenStreetMap rooftop lookup is temporarily unavailable right now. Please try refreshing this analysis shortly.';
+  }
+  return message;
+}
+
 export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsProps) {
   const [liveComparison, setLiveComparison] = useState<ComparisonData | null>(null);
   const [isLoading, setIsLoading] = useState(false);
@@ -55,7 +62,8 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
       });
       setLiveComparison(data);
     } catch (err) {
-      setError(err instanceof Error ? err.message : 'Failed to compare models');
+      const message = err instanceof Error ? err.message : 'Failed to compare models';
+      setError(mapLiveComparisonError(message));
     } finally {
       setIsLoading(false);
     }

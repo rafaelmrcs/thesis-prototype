@@ -29,6 +29,19 @@ function formatCoordinate(value: number): string {
   return value.toFixed(6);
 }
 
+function mapLiveLookupError(message: string): string {
+  if (/Failed to fetch|NetworkError|Backend URL is not configured/i.test(message)) {
+    return 'Failed to reach backend. Set VITE_BACKEND_URL to your Railway backend URL, then redeploy frontend.';
+  }
+  if (/No mapped building footprint was found near/i.test(message)) {
+    return 'No mapped rooftop was found near this pinned location. Try clicking closer to a building or choose another nearby address.';
+  }
+  if (/Live rooftop lookup is temporarily unavailable because all configured Overpass endpoints failed/i.test(message)) {
+    return 'Live OpenStreetMap rooftop lookup is temporarily unavailable right now. Please try predicting again shortly.';
+  }
+  return message;
+}
+
 function parseCoordinatePair(input: string): { lat: number; lng: number } | { error: string } | null {
   const trimmed = input.trim();
   const parts = trimmed.split(",");
@@ -240,13 +253,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     } catch (error) {
       console.error('❌ Prediction error:', error);
       const message = error instanceof Error ? error.message : 'Unable to reach prediction service.';
-      if (/Failed to fetch|NetworkError|Backend URL is not configured/i.test(message)) {
-        setApiError('Failed to reach backend. Set VITE_BACKEND_URL to your Railway backend URL, then redeploy frontend.');
-      } else if (/No mapped building footprint was found near/i.test(message)) {
-        setApiError('No mapped rooftop was found near this pinned location. Try clicking closer to a building or choose another nearby address.');
-      } else {
-        setApiError(message);
-      }
+      setApiError(mapLiveLookupError(message));
       setPrediction(null);
     } finally {
       setIsLoading(false);

@@ -12,6 +12,7 @@ Key runtime rules:
 
 from __future__ import annotations
 
+import logging
 import math
 import os
 import threading
@@ -64,7 +65,12 @@ NASA_POWER_URL = "https://power.larc.nasa.gov/api/temporal/daily/point"
 NASA_TIMEOUT_SEC = 30
 NASA_LOOKBACK_DAYS = int(os.getenv("NASA_LOOKBACK_DAYS", "365"))
 NASA_LAG_DAYS = int(os.getenv("NASA_LAG_DAYS", "7"))
-OVERPASS_URL = "https://overpass-api.de/api/interpreter"
+DEFAULT_OVERPASS_API_URLS = (
+    "https://overpass-api.de/api/interpreter",
+    "https://overpass.private.coffee/api/interpreter",
+    "https://lz4.overpass-api.de/api/interpreter",
+    "https://z.overpass-api.de/api/interpreter",
+)
 OVERPASS_TIMEOUT_SEC = 18
 OVERPASS_RADIUS_SEQUENCE_METERS = (150, 300)
 REQUEST_USER_AGENT = "FI-AdaBoost-Solar-Potential/2.1"
@@ -75,6 +81,7 @@ DEFAULT_CORS_ORIGIN_REGEX = (
 
 _pvlib_cache: dict[tuple[float, float, str, str], dict[str, float]] = {}
 _nasa_cache: dict[tuple[float, float, str, str], dict[str, float | str]] = {}
+logger = logging.getLogger(__name__)
 
 
 class PredictRequest(BaseModel):
@@ -168,6 +175,24 @@ def _parse_cors_origins() -> list[str]:
         if origin.startswith(("localhost", "127.0.0.1", "0.0.0.0")):
             origins.append(f"http://{origin}")
     return origins or defaults
+
+
+def _parse_overpass_api_urls() -> tuple[str, ...]:
+    configured = os.getenv("OVERPASS_API_URLS", "")
+    raw_urls = [item.strip().rstrip("/") for item in configured.split(",") if item.strip()]
+    if not raw_urls:
+        return DEFAULT_OVERPASS_API_URLS
+
+    urls: list[str] = []
+    for url in raw_urls:
+        if url.startswith(("http://", "https://")):
+            urls.append(url)
+        else:
+            urls.append(f"https://{url}")
+    return tuple(urls)
+
+
+OVERPASS_API_URLS = _parse_overpass_api_urls()
 
 
 app = FastAPI(title="FI-AdaBoost API", version="2.1.0")
@@ -282,22 +307,37 @@ def _overpass_buildings_for_radius(
         f'(way["building"](around:{radius_m},{lat},{lng}););'
         "out body geom;"
     )
-    try:
-        response = requests.post(
-            OVERPASS_URL,
-            data={"data": query},
-            headers={"User-Agent": REQUEST_USER_AGENT},
-            timeout=OVERPASS_TIMEOUT_SEC + 5,
-        )
-        response.raise_for_status()
-        elements = response.json().get("elements", [])
-    except Exception as exc:
-        raise LiveFeatureError(
-            f"Overpass live rooftop lookup failed for {lat:.6f}, {lng:.6f}: {exc}",
-            status_code=502,
-        ) from exc
+    for endpoint_url in OVERPASS_API_URLS:
+        try:
+            response = requests.post(
+                endpoint_url,
+                data={"data": query},
+                headers={"User-Agent": REQUEST_USER_AGENT},
+                timeout=OVERPASS_TIMEOUT_SEC + 5,
+            )
+            response.raise_for_status()
+            payload = response.json()
+            if not isinstance(payload, dict):
+                raise ValueError("unexpected response payload")
+            elements = payload.get("elements", [])
+            if not isinstance(elements, list):
+                raise ValueError("missing elements array")
+            return [element for element in elements if len(element.get("geometry", [])) >= 3]
+        except Exception as exc:
+            logger.warning(
+                "Overpass endpoint failed for lat=%0.6f lng=%0.6f radius=%sm endpoint=%s: %s",
+                lat,
+                lng,
+                radius_m,
+                endpoint_url,
+                exc,
+            )
 
-    return [element for element in elements if len(element.get("geometry", [])) >= 3]
+    raise LiveFeatureError(
+        "Live rooftop lookup is temporarily unavailable because all configured Overpass "
+        f"endpoints failed for {lat:.6f}, {lng:.6f}. Please try again shortly.",
+        status_code=502,
+    )
 
 
 def _overpass_buildings(lat: float, lng: float) -> list[dict[str, Any]]:
