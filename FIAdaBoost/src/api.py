@@ -66,7 +66,7 @@ NASA_LOOKBACK_DAYS = int(os.getenv("NASA_LOOKBACK_DAYS", "365"))
 NASA_LAG_DAYS = int(os.getenv("NASA_LAG_DAYS", "7"))
 OVERPASS_URL = "https://overpass-api.de/api/interpreter"
 OVERPASS_TIMEOUT_SEC = 18
-OVERPASS_RADIUS_METERS = int(os.getenv("OVERPASS_RADIUS_METERS", "150"))
+OVERPASS_RADIUS_SEQUENCE_METERS = (150, 300, 500)
 REQUEST_USER_AGENT = "FI-AdaBoost-Solar-Potential/2.1"
 DEFAULT_CORS_ORIGIN_REGEX = (
     r"http://([a-zA-Z0-9\-\.]+):5173"
@@ -272,10 +272,14 @@ def fetch_nasa_live(lat: float, lng: float) -> dict[str, float | str]:
     return result
 
 
-def _overpass_buildings(lat: float, lng: float) -> list[dict[str, Any]]:
+def _overpass_buildings_for_radius(
+    lat: float,
+    lng: float,
+    radius_m: int,
+) -> list[dict[str, Any]]:
     query = (
         f"[out:json][timeout:{OVERPASS_TIMEOUT_SEC}];"
-        f'(way["building"](around:{OVERPASS_RADIUS_METERS},{lat},{lng}););'
+        f'(way["building"](around:{radius_m},{lat},{lng}););'
         "out body geom;"
     )
     try:
@@ -293,14 +297,22 @@ def _overpass_buildings(lat: float, lng: float) -> list[dict[str, Any]]:
             status_code=502,
         ) from exc
 
-    buildings = [element for element in elements if len(element.get("geometry", [])) >= 3]
-    if not buildings:
-        raise LiveFeatureError(
-            f"No mapped building footprint was found within {OVERPASS_RADIUS_METERS} m of "
-            f"{lat:.6f}, {lng:.6f}.",
-            status_code=404,
-        )
-    return buildings
+    return [element for element in elements if len(element.get("geometry", [])) >= 3]
+
+
+def _overpass_buildings(lat: float, lng: float) -> list[dict[str, Any]]:
+    for radius_m in OVERPASS_RADIUS_SEQUENCE_METERS:
+        buildings = _overpass_buildings_for_radius(lat, lng, radius_m)
+        if buildings:
+            return buildings
+
+    final_radius_m = OVERPASS_RADIUS_SEQUENCE_METERS[-1]
+    raise LiveFeatureError(
+        "No mapped building footprint was found near "
+        f"{lat:.6f}, {lng:.6f} after live Overpass searches up to {final_radius_m} m. "
+        "The selected coordinate may be outside the study area or in an unmapped/sparse rooftop area.",
+        status_code=404,
+    )
 
 
 def _centroid(nodes: list[dict[str, float]]) -> tuple[float, float]:

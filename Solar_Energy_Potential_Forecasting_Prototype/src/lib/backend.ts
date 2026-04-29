@@ -43,7 +43,16 @@ export async function fetchBackendJson<T>(path: string, init?: RequestInit): Pro
     try {
       const response = await fetch(`${backendUrl}${path}`, init);
       if (response.ok) return (await response.json()) as T;
-      lastError = `${path} failed with status ${response.status}`;
+      try {
+        const errorBody = (await response.json()) as { detail?: unknown };
+        if (typeof errorBody.detail === 'string' && errorBody.detail.trim()) {
+          lastError = errorBody.detail.trim();
+        } else {
+          lastError = `${path} failed with status ${response.status}`;
+        }
+      } catch {
+        lastError = `${path} failed with status ${response.status}`;
+      }
     } catch (error) {
       lastError = error instanceof Error ? error.message : "Network error";
     }

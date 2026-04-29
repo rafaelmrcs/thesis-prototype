@@ -192,6 +192,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
       const message = error instanceof Error ? error.message : 'Unable to reach prediction service.';
       if (/Failed to fetch|NetworkError|Backend URL is not configured/i.test(message)) {
         setApiError('Failed to reach backend. Set VITE_BACKEND_URL to your Railway backend URL, then redeploy frontend.');
+      } else if (/No mapped building footprint was found near/i.test(message)) {
+        setApiError('No mapped rooftop was found near this pinned location. Try clicking closer to a building or choose another nearby address.');
       } else {
         setApiError(message);
       }
