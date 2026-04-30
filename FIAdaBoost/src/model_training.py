@@ -4,18 +4,20 @@ model_training.py
 Solar Irradiance Forecasting — Davao City
 AdaBoost Regression (Baseline)  vs  FI-AdaBoost Regression (Proposed)
 
+
 METHODOLOGY (Two-Phase Pipeline)
 ──────────────────────────────────────────────────────────────────────────
   PHASE 1: MACHINE LEARNING (fair comparison)
   - Both models predict the SAME target: effective GHI (J/m²/day),
     pvlib POA-adjusted per building (Fix 1 — aligned targets).
-  - Both use the SAME 8 features (Fix 6 — no log transforms):
+  - Both models use the SAME 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
   - Hyperparameters tuned via Optuna + 5-fold KFold (Fix 4).
   - Statistical significance assessed via Diebold–Mariano test (Fix 5).
   - The ONLY algorithmic difference: standard AdaBoost vs FI-AdaBoost
     (feature-importance-weighted boosting update — the Φᵢ term).
+
 
   SECONDARY: DAILY TIME-SERIES PIPELINE (Fix 2)
   - Fetches 365 daily NASA POWER records for Davao City centroid.
@@ -24,10 +26,12 @@ METHODOLOGY (Two-Phase Pipeline)
   - Chronological 80/20 split; Optuna + TimeSeriesSplit(5) CV.
   - Saves cv_fold_metrics.csv and dm_test_results.csv.
 
+
   PHASE 2: ENERGY FORECASTING
   - Applies trained spatial model to 3,000 buildings for annual kWh.
 ────────────────────────────────────────────────────────────────────────────
 """
+
 
 import os
 import sys
@@ -35,8 +39,10 @@ import math
 import warnings
 warnings.filterwarnings("ignore")
 
+
 import optuna
 optuna.logging.set_verbosity(optuna.logging.WARNING)
+
 
 import joblib
 import numpy as np
@@ -46,10 +52,12 @@ import geopandas as gpd
 from scipy import stats
 import pvlib
 
+
 from sklearn.tree import DecisionTreeRegressor
 from sklearn.ensemble import AdaBoostRegressor
 from sklearn.model_selection import train_test_split, KFold, TimeSeriesSplit
 from sklearn.metrics import mean_squared_error, mean_absolute_error, r2_score
+
 
 # ── Paths ─────────────────────────────────────────────────────────────────────
 ROOT_DIR      = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -60,8 +68,10 @@ MODEL_DIR     = os.path.join(ROOT_DIR, "models")
 os.makedirs(RESULTS_DIR, exist_ok=True)
 os.makedirs(MODEL_DIR,   exist_ok=True)
 
+
 BASELINE_MODEL_FILE = os.path.join(MODEL_DIR, "baseline_adaboost.pkl")
 FI_MODEL_FILE       = os.path.join(MODEL_DIR, "fi_adaboost.pkl")
+
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RANDOM_SEED   = 42
@@ -70,7 +80,9 @@ PERF_RATIO    = 0.78
 DAYS_PER_YEAR = 365
 KWH_TO_J      = 3_600_000
 
+
 np.random.seed(RANDOM_SEED)
+
 
 # ── Feature sets — identical for fair algorithm comparison (Fix 1 + Fix 6) ───
 # Both models predict Target_eff_J (pvlib POA-adjusted effective GHI).
@@ -85,6 +97,7 @@ BASELINE_FEATURES = SHARED_FEATURES
 FI_FEATURES       = SHARED_FEATURES
 TARGET_COL        = "Target_eff_J"
 
+
 # Daily time-series feature set (§2.2.1 + §2.2.2 + §2.2.3 aggregates)
 DAILY_FEATURES = [
     "month_sin", "month_cos", "season",
@@ -93,8 +106,10 @@ DAILY_FEATURES = [
 ]
 DAILY_TARGET = "GHI_J"
 
+
 C_ADA = "#E74C3C"
 C_FI  = "#27AE60"
+
 
 # =============================================================================
 # pvlib CACHED HELPERS
@@ -426,24 +441,34 @@ def _tune_timeseries(model_cls, space_fn, X_train: np.ndarray, y_train: np.ndarr
 # =============================================================================
 # CROSS-VALIDATION METRICS — Fix 4
 # =============================================================================
-def run_kfold_cv(X_train: np.ndarray, y_train: np.ndarray,
+def run_kfold_cv(X_train_ada: np.ndarray, X_train_fi: np.ndarray,
+                 y_train: np.ndarray,
                  ada_params: dict, fi_params: dict, n_splits: int = 5) -> pd.DataFrame:
-    """KFold CV with tuned hyperparams — saves per-fold metrics."""
+    """KFold CV with tuned hyperparams — saves per-fold metrics including Train vs Val."""
     kf   = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_SEED)
     rows = []
-    for fold, (tr_idx, val_idx) in enumerate(kf.split(X_train), start=1):
-        ada   = BaselineAdaBoost(**ada_params).fit(X_train[tr_idx], y_train[tr_idx])
-        fi    = FIAdaBoostRegressor(**fi_params).fit(X_train[tr_idx], y_train[tr_idx])
-        ada_m = compute_metrics(y_train[val_idx], ada.predict(X_train[val_idx]))
-        fi_m  = compute_metrics(y_train[val_idx], fi.predict(X_train[val_idx]))
+    for fold, (tr_idx, val_idx) in enumerate(kf.split(y_train), start=1):
+        ada   = BaselineAdaBoost(**ada_params).fit(X_train_ada[tr_idx], y_train[tr_idx])
+        fi    = FIAdaBoostRegressor(**fi_params).fit(X_train_fi[tr_idx], y_train[tr_idx])
+
+        # Compute Training Metrics
+        ada_train_m = compute_metrics(y_train[tr_idx], ada.predict(X_train_ada[tr_idx]))
+        fi_train_m  = compute_metrics(y_train[tr_idx], fi.predict(X_train_fi[tr_idx]))
+
+        # Compute Validation Metrics
+        ada_val_m = compute_metrics(y_train[val_idx], ada.predict(X_train_ada[val_idx]))
+        fi_val_m  = compute_metrics(y_train[val_idx], fi.predict(X_train_fi[val_idx]))
+
         rows.append({
-            "fold":       fold,
-            "ada_RMSE_J": ada_m["RMSE_J"],
-            "ada_MAE_J":  ada_m["MAE_J"],
-            "ada_R2":     ada_m["R2"],
-            "fi_RMSE_J":  fi_m["RMSE_J"],
-            "fi_MAE_J":   fi_m["MAE_J"],
-            "fi_R2":      fi_m["R2"],
+            "fold":             fold,
+            "ada_train_RMSE_J": ada_train_m["RMSE_J"],
+            "ada_val_RMSE_J":   ada_val_m["RMSE_J"],
+            "ada_train_R2":     ada_train_m["R2"],
+            "ada_val_R2":       ada_val_m["R2"],
+            "fi_train_RMSE_J":  fi_train_m["RMSE_J"],
+            "fi_val_RMSE_J":    fi_val_m["RMSE_J"],
+            "fi_train_R2":      fi_train_m["R2"],
+            "fi_val_R2":        fi_val_m["R2"],
         })
     return pd.DataFrame(rows)
 
@@ -549,7 +574,7 @@ def load_daily_dataset() -> pd.DataFrame:
     # pvlib clear-sky at city centroid
     lat = float(df["lat"].iloc[0])
     lon = float(df["lon"].iloc[0])
-    loc    = pvlib.location.Location(lat, lon, altitude=30, tz="Asia/Manila")
+    loc     = pvlib.location.Location(lat, lon, altitude=30, tz="Asia/Manila")
     times_h = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
     cs = loc.get_clearsky(times_h, model="ineichen")
 
@@ -606,7 +631,7 @@ def temporal_split(df: pd.DataFrame, test_frac: float = 0.20):
 def run_daily_pipeline() -> None:
     """
     Secondary pipeline: 365-day time-series, temporal split, TimeSeriesSplit CV.
-    Saves: cv_fold_metrics.csv, dm_test_results.csv, daily_metrics_summary.csv.
+    Saves: cv_fold_metrics_daily.csv, dm_test_results_daily.csv, daily_metrics_summary.csv.
     """
     print("\n" + "─" * 70)
     print("  [Daily Pipeline] §2.5.1 Temporal split + §2.5.2 TimeSeriesSplit CV")
@@ -658,13 +683,25 @@ def run_daily_pipeline() -> None:
     # Final fit and test evaluation
     ada_final = BaselineAdaBoost(**ada_params).fit(X_tr, y_tr)
     fi_final  = FIAdaBoostRegressor(**fi_params).fit(X_tr, y_tr)
-    ada_pred  = ada_final.predict(X_te)
-    fi_pred   = fi_final.predict(X_te)
-    ada_m     = compute_metrics(y_te, ada_pred)
-    fi_m      = compute_metrics(y_te, fi_pred)
+
+    # Train metrics
+    ada_train_m = compute_metrics(y_tr, ada_final.predict(X_tr))
+    fi_train_m  = compute_metrics(y_tr, fi_final.predict(X_tr))
+
+    # Test metrics
+    ada_pred = ada_final.predict(X_te)
+    fi_pred  = fi_final.predict(X_te)
+    ada_m    = compute_metrics(y_te, ada_pred)
+    fi_m     = compute_metrics(y_te, fi_pred)
+
+    print(f"\n  [Daily] Test Results (temporal holdout):")
+    print(f"    AdaBoost   (Train): RMSE={ada_train_m['RMSE_J']:>12,.0f}  R²={ada_train_m['R2']:.4f}")
+    print(f"    AdaBoost   (Test) : RMSE={ada_m['RMSE_J']:>12,.0f}  R²={ada_m['R2']:.4f}")
+    print(f"    FI-AdaBoost(Train): RMSE={fi_train_m['RMSE_J']:>12,.0f}  R²={fi_train_m['R2']:.4f}")
+    print(f"    FI-AdaBoost(Test) : RMSE={fi_m['RMSE_J']:>12,.0f}  R²={fi_m['R2']:.4f}")
 
     # Diebold–Mariano test (Fix 5)
-    dm      = diebold_mariano_test(y_te - ada_pred, y_te - fi_pred)
+    dm = diebold_mariano_test(y_te - ada_pred, y_te - fi_pred)
 
     # Save results
     daily_rows = [
@@ -674,7 +711,8 @@ def run_daily_pipeline() -> None:
     p_daily = os.path.join(RESULTS_DIR, "daily_metrics_summary.csv")
     pd.DataFrame(daily_rows).to_csv(p_daily, index=False)
 
-    p_cv = save_cv_metrics(cv_df)
+    p_cv = os.path.join(RESULTS_DIR, "cv_fold_metrics_daily.csv")
+    cv_df.to_csv(p_cv, index=False)
     p_dm = save_dm_results(dm, suffix="daily")
 
     print(f"\n  Test Results (temporal holdout):")
@@ -849,6 +887,32 @@ def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame
     plt.close()
 
 
+def plot_overfit_check(ada_train_m, ada_test_m, fi_train_m, fi_test_m):
+    labels     = ["Baseline AdaBoost", "FI-AdaBoost Proposed"]
+    train_rmse = [ada_train_m["RMSE_J"], fi_train_m["RMSE_J"]]
+    test_rmse  = [ada_test_m["RMSE_J"],  fi_test_m["RMSE_J"]]
+
+    x     = np.arange(len(labels))
+    width = 0.35
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    rects1 = ax.bar(x - width / 2, train_rmse, width, label="Train RMSE", color="#3498DB", edgecolor="black")
+    rects2 = ax.bar(x + width / 2, test_rmse,  width, label="Test RMSE",  color="#E74C3C", edgecolor="black")
+
+    ax.set_ylabel("RMSE (J/m²/day)", fontsize=12)
+    ax.set_title("Overfitting Check: Train vs Test Error\n(A massive gap indicates overfitting)",
+                 fontsize=13, fontweight="bold")
+    ax.set_xticks(x)
+    ax.set_xticklabels(labels, fontsize=11)
+    ax.legend()
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "overfit_check.png"), dpi=300, bbox_inches="tight")
+    plt.close()
+
+
 # =============================================================================
 # MAIN PIPELINE
 # =============================================================================
@@ -862,52 +926,84 @@ def main():
     # ── [1] Load data ──────────────────────────────────────────────────────────
     print("\n[1/6] Loading spatial dataset and computing features …")
     df = load_dataset()
-    print(f"  Rows: {len(df)}  |  Features: {SHARED_FEATURES}")
+    print(f"  Rows: {len(df)}")
+    print(f"  Baseline features ({len(BASELINE_FEATURES)}): {BASELINE_FEATURES}")
+    print(f"  FI-AdaBoost features ({len(FI_FEATURES)}): {FI_FEATURES}")
 
     # ── [2] Split ──────────────────────────────────────────────────────────────
     print("\n[2/6] 80/20 Random Split …")
     train_df, test_df = random_split(df)
+    print(f"  Total: {len(df)}  |  Train: {len(train_df)}  |  Test: {len(test_df)}")
 
-    X_tr = train_df[SHARED_FEATURES].values.astype(float)
-    X_te = test_df[SHARED_FEATURES].values.astype(float)
+    split_info = [{
+        "total_samples":  len(df),
+        "train_samples":  len(train_df),
+        "test_samples":   len(test_df),
+        "test_fraction":  0.20,
+        "split_method":   "random_shuffle",
+        "random_seed":    RANDOM_SEED,
+        "target_col":     TARGET_COL,
+    }]
+    pd.DataFrame(split_info).to_csv(
+        os.path.join(RESULTS_DIR, "train_test_split_info.csv"), index=False
+    )
+
+    X_tr_ada = train_df[BASELINE_FEATURES].values.astype(float)
+    X_te_ada = test_df[BASELINE_FEATURES].values.astype(float)
+    X_tr_fi  = train_df[FI_FEATURES].values.astype(float)
+    X_te_fi  = test_df[FI_FEATURES].values.astype(float)
     y_tr = train_df[TARGET_COL].values.astype(float)
     y_te = test_df[TARGET_COL].values.astype(float)
 
     # ── [3] Optuna hyperparameter tuning (Fix 4) ───────────────────────────────
     print("\n[3/6] Optuna Tuning — KFold(5), 100 trials per model …")
     print("  Tuning BaselineAdaBoost …")
-    ada_params = _tune_kfold(BaselineAdaBoost, _baseline_space, X_tr, y_tr)
+    ada_params = _tune_kfold(BaselineAdaBoost, _baseline_space, X_tr_ada, y_tr)
     print(f"  Best AdaBoost params : {ada_params}")
 
     print("  Tuning FIAdaBoostRegressor …")
-    fi_params = _tune_kfold(FIAdaBoostRegressor, _fi_space, X_tr, y_tr)
+    fi_params = _tune_kfold(FIAdaBoostRegressor, _fi_space, X_tr_fi, y_tr)
     print(f"  Best FI-AdaBoost params: {fi_params}")
 
     # ── [4] KFold CV metrics (Fix 4) ───────────────────────────────────────────
     print("\n[4/6] KFold CV Metrics …")
-    cv_df = run_kfold_cv(X_tr, y_tr, ada_params, fi_params)
-    print("  Fold metrics:")
+    cv_df = run_kfold_cv(X_tr_ada, X_tr_fi, y_tr, ada_params, fi_params)
+    save_cv_metrics(cv_df)
+
+    print("  Fold metrics (Validation):")
     for _, r in cv_df.iterrows():
         print(f"    Fold {int(r['fold'])}: "
-              f"Ada RMSE={r['ada_RMSE_J']:>12,.0f}  "
-              f"FI  RMSE={r['fi_RMSE_J']:>12,.0f}  "
-              f"FI  R²={r['fi_R2']:.4f}")
+              f"Ada RMSE={r['ada_val_RMSE_J']:>12,.0f}  "
+              f"FI  RMSE={r['fi_val_RMSE_J']:>12,.0f}  "
+              f"FI  R²={r['fi_val_R2']:.4f}")
     avg = cv_df.mean(numeric_only=True)
     print(f"    Avg:     "
-          f"Ada RMSE={avg['ada_RMSE_J']:>12,.0f}  "
-          f"FI  RMSE={avg['fi_RMSE_J']:>12,.0f}  "
-          f"FI  R²={avg['fi_R2']:.4f}")
+          f"Ada RMSE={avg['ada_val_RMSE_J']:>12,.0f}  "
+          f"FI  RMSE={avg['fi_val_RMSE_J']:>12,.0f}  "
+          f"FI  R²={avg['fi_val_R2']:.4f}")
 
     # ── [5] Train final models on full training set ────────────────────────────
     print("\n[5/6] Training final models …")
-    ada = BaselineAdaBoost(**ada_params).fit(X_tr, y_tr)
-    fi  = FIAdaBoostRegressor(**fi_params).fit(X_tr, y_tr)
+    ada = BaselineAdaBoost(**ada_params).fit(X_tr_ada, y_tr)
+    fi  = FIAdaBoostRegressor(**fi_params).fit(X_tr_fi, y_tr)
 
-    ada_te = ada.predict(X_te)
-    fi_te  = fi.predict(X_te)
+    # Predict on Training Data for Overfit Check
+    ada_train_m = compute_metrics(y_tr, ada.predict(X_tr_ada))
+    fi_train_m  = compute_metrics(y_tr, fi.predict(X_tr_fi))
+
+    # Predict on Test Data
+    ada_te = ada.predict(X_te_ada)
+    fi_te  = fi.predict(X_te_fi)
 
     ada_test_m = compute_metrics(y_te, ada_te)
     fi_test_m  = compute_metrics(y_te, fi_te)
+
+    # Print the Overfit Check
+    print("\n  OVERFITTING CHECK (Train vs Test RMSE):")
+    print(f"    AdaBoost   : Train RMSE={ada_train_m['RMSE_J']:>12,.0f} | Test RMSE={ada_test_m['RMSE_J']:>12,.0f}")
+    print(f"    FI-AdaBoost: Train RMSE={fi_train_m['RMSE_J']:>12,.0f} | Test RMSE={fi_test_m['RMSE_J']:>12,.0f}")
+    if fi_train_m["RMSE_J"] < (fi_test_m["RMSE_J"] * 0.5):
+        print("    WARNING: FI-AdaBoost Train error is less than half the Test error. Significant overfitting likely.")
 
     # Diebold–Mariano test (Fix 5)
     dm = diebold_mariano_test(y_te - ada_te, y_te - fi_te)
@@ -926,8 +1022,8 @@ def main():
 
     # ── [6] Phase 2 energy forecast + save results ────────────────────────────
     print("\n[6/6] Phase 2 Energy Forecast + Saving Results …")
-    ada_fcast = forecast_solar_energy(df, ada, SHARED_FEATURES, label="ada")
-    fi_fcast  = forecast_solar_energy(df, fi,  SHARED_FEATURES, label="fi")
+    ada_fcast = forecast_solar_energy(df, ada, BASELINE_FEATURES, label="ada")
+    fi_fcast  = forecast_solar_energy(df, fi,  FI_FEATURES,       label="fi")
 
     print(f"  Baseline   total: {ada_fcast['ada_solar_kWh_yr'].sum():>18,.2f} kWh/year")
     print(f"  FI-AdaBoost total: {fi_fcast['fi_solar_kWh_yr'].sum():>18,.2f} kWh/year")
@@ -947,17 +1043,20 @@ def main():
     plot_metrics_comparison(ada_test_m, fi_test_m)
     plot_energy_distribution(ada_fcast, fi_fcast)
     plot_total_energy_comparison(ada_fcast, fi_fcast)
+    plot_overfit_check(ada_train_m, ada_test_m, fi_train_m, fi_test_m)
 
     saved = [
+        ("CSV",   os.path.join(RESULTS_DIR, "train_test_split_info.csv")),
         ("CSV",   p_metrics),
         ("CSV",   p_forecast),
-        ("CSV",   p_dm),   # dm_test_results_spatial.csv
+        ("CSV",   p_dm),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "metrics_comparison.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "energy_distribution.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "total_energy_comparison.png")),
+        ("Plot",  os.path.join(RESULTS_DIR, "overfit_check.png")),
         ("Model", BASELINE_MODEL_FILE),
         ("Model", FI_MODEL_FILE),
     ]
