@@ -275,7 +275,12 @@ class FIAdaBoostRegressor:
             if D_t == 0:
                 break
             e_i   = abs_e / D_t
-            eps_t = float(np.dot(weights, e_i))
+            phi   = self._norm_fi(tree)                     # Calculate phi early
+            Phi_i = self._composite_phi(X_arr, phi)         # Calculate Phi_i early
+
+            modulated_loss = e_i * Phi_i                    # Modulate the error
+            eps_t = float(np.dot(weights, modulated_loss))  # Calculate eps_t with modulated loss
+
             if eps_t >= 0.5:
                 break
 
