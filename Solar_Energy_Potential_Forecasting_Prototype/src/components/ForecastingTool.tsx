@@ -90,6 +90,33 @@ interface PredictionResult {
   humidity: number;
   clearSkyRatio: number;
 }
+
+type ApiPredictionResult = Omit<PredictionResult, 'predictedIrradiance'> & {
+  predictedIrradiance?: number;
+};
+
+function normalizePredictionResult(result: ApiPredictionResult): PredictionResult {
+  if (typeof result.predictedIrradiance === 'number') {
+    return {
+      ...result,
+      predictedIrradiance: result.predictedIrradiance,
+    };
+  }
+
+  const looksLikeLegacyIrradiance = result.solarPotential <= 15;
+  const predictedIrradiance = looksLikeLegacyIrradiance
+    ? result.solarPotential
+    : result.solarPotential / Math.max(result.rooftopArea, 1);
+
+  return {
+    ...result,
+    predictedIrradiance,
+    solarPotential: looksLikeLegacyIrradiance
+      ? result.solarPotential * result.rooftopArea
+      : result.solarPotential,
+  };
+}
+
 function ClickToSetLocation({ onPick }: { onPick: (lat: number, lng: number) => void }) {
   useMapEvents({
     click(e: LeafletMouseEvent) {
@@ -240,7 +267,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     setIsLoading(true);
 
     try {
-      const result = await fetchBackendJson<PredictionResult>('/predict', {
+      const result = await fetchBackendJson<ApiPredictionResult>('/predict', {
         method: 'POST',
         headers: {
           'Content-Type': 'application/json',
@@ -248,7 +275,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
         body: JSON.stringify({ lat: latValue, lng: lngValue }),
       });
       console.log('✅ Prediction result:', result);
-      setPrediction(result);
+      setPrediction(normalizePredictionResult(result));
     } catch (error) {
       console.error('❌ Prediction error:', error);
       const message = error instanceof Error ? error.message : 'Unable to reach prediction service.';
@@ -531,7 +558,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                       </p>
                     </div>
                     <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-                      Solar Energy Potential = predicted irradiance x rooftop area. This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
+                      This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
                     </p>
                     <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Scope and Assumptions</p>
