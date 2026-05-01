@@ -187,8 +187,8 @@ export function RooftopExplorer() {
 
               <div>
                 <div className="flex justify-between items-center mb-2">
-                  <span className="text-sm text-gray-700">Predicted Daily Energy</span>
-                  <span className="text-sm">{selectedRooftop.predictedGHI.toFixed(2)} kWh/m²</span>
+                  <span className="text-sm text-gray-700">Solar Irradiance (GHI)</span>
+                  <span className="text-sm">{selectedRooftop.predictedGHI.toFixed(2)} kWh/m²/day</span>
                 </div>
                 <div className="w-full bg-gray-200 rounded-full h-2">
                   <div
@@ -199,24 +199,18 @@ export function RooftopExplorer() {
               </div>
 
               <div className="pt-4 border-t border-gray-200">
-                <h4 className="text-sm mb-3">Estimated Annual Output</h4>
-                <div className="grid grid-cols-2 gap-4">
-                  <div className="bg-blue-50 rounded-lg p-3">
-                    <p className="text-xs text-blue-600 mb-1">Total Energy</p>
-                    <p className="text-xl text-blue-700">
-                      {(selectedRooftop.predictedGHI * selectedRooftop.area * 365 / 1000).toFixed(1)}
-                    </p>
-                    <p className="text-xs text-blue-600">MWh/year</p>
-                  </div>
-                  
-                  <div className="bg-green-50 rounded-lg p-3">
-                    <p className="text-xs text-green-600 mb-1">CO₂ Offset</p>
-                    <p className="text-xl text-green-700">
-                      {(selectedRooftop.predictedGHI * selectedRooftop.area * 365 * 0.7 / 1000).toFixed(1)}
-                    </p>
-                    <p className="text-xs text-green-600">tons/year</p>
-                  </div>
+                <h4 className="text-sm mb-3">Solar Energy Potential (Theoretical)</h4>
+                <div className="bg-blue-50 rounded-lg p-3">
+                  <p className="text-xs text-blue-600 mb-1">Daily SEP</p>
+                  <p className="text-xl text-blue-700">
+                    {(selectedRooftop.predictedGHI * selectedRooftop.area).toFixed(1)}
+                  </p>
+                  <p className="text-xs text-blue-600 mb-2">kWh/day</p>
+                  <p className="text-xs text-blue-500">Annual: {(selectedRooftop.predictedGHI * selectedRooftop.area * 365).toFixed(0)} kWh/year</p>
                 </div>
+                <p className="text-xs text-gray-400 mt-2 leading-relaxed">
+                  This is sunlight hitting the roof, before any conversion to electricity. Electrical output depends on specific solar panels and installation.
+                </p>
               </div>
             </div>
           </div>

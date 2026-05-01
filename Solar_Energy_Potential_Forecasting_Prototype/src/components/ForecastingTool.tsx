@@ -124,10 +124,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const lngValue = Number(coordinates.lng);
   const hasValidCoordinates = Number.isFinite(latValue) && Number.isFinite(lngValue);
 
-  const panelEff = 0.192;
-  const performanceRatio = 0.78;
-  const annualEnergyEstimate = prediction
-    ? prediction.rooftopArea * panelEff * prediction.solarPotential * 365 * performanceRatio
+  const dailyEnergyPotential = prediction
+    ? prediction.rooftopArea * prediction.solarPotential
     : null;
 
   // Clear prediction when coordinates change
@@ -475,7 +473,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <div>
                   <CardTitle className="text-2xl">Predicted Solar Energy Potential</CardTitle>
                   <CardDescription className="text-sm">
-                    FI-AdaBoost model with live rooftop geometry fetched from OpenStreetMap — similar to Google Sunroof
+                    FI-AdaBoost model predicts Solar Irradiance (GHI) using rooftop geometry from OpenStreetMap. Solar Energy Potential is derived by multiplying GHI by your rooftop area.
                   </CardDescription>
                 </div>
                 <div className={`w-16 h-16 bg-gradient-to-br ${getSolarRating(prediction.solarPotential).bgGradient} rounded-full flex items-center justify-center shadow-lg`}>
@@ -486,6 +484,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             <CardContent>
               <div className="space-y-6">
                 <div>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Solar Irradiance (GHI)</p>
                   <div className="flex items-baseline gap-3 mb-3">
                     <span className="text-6xl sm:text-7xl bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
                       {prediction.solarPotential.toFixed(2)}
@@ -500,7 +499,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 {/* Visual Indicator */}
                 <div className="space-y-3">
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-700">Energy Potential Level</span>
+                    <span className="text-gray-700">Solar Irradiance Level</span>
                     <span className="text-lg">{Math.round((prediction.solarPotential / 7) * 100)}%</span>
                   </div>
                   <div className="h-4 bg-gray-200/50 rounded-full overflow-hidden shadow-inner">
@@ -517,17 +516,20 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                   </p>
                 </div>
 
-                {annualEnergyEstimate !== null && (
+                {dailyEnergyPotential !== null && (
                   <div className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Estimated Output (using saved model + Equation 5)</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Solar Energy Potential (Theoretical)</p>
                     <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <p className="text-sm text-slate-700">
-                        Annual: <span className="font-semibold">{annualEnergyEstimate.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
+                        Daily: <span className="font-semibold">{dailyEnergyPotential.toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh/day</span>
                       </p>
                       <p className="text-sm text-slate-700">
-                        Monthly: <span className="font-semibold">{(annualEnergyEstimate / 12).toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/month</span>
+                        Annual: <span className="font-semibold">{(dailyEnergyPotential * 365).toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
                       </p>
                     </div>
+                    <p className="text-xs text-slate-400 mt-3 leading-relaxed">
+                      This is sunlight hitting the roof, before any conversion to electricity. Electrical output depends on specific solar panels and installation.
+                    </p>
                   </div>
                 )}
               </div>
@@ -547,7 +549,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <InfoItem
                   label="Rooftop Area"
                   value={`${prediction.rooftopArea.toFixed(1)} m²`}
-                  description="Available installation space"
+                  description="Total rooftop surface area"
                   gradient="from-purple-500 to-pink-500"
                 />
                 <InfoItem

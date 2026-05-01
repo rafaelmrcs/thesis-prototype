@@ -59,14 +59,15 @@ export function Help() {
               </p>
             </div>
             <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
-              <p className="font-semibold text-amber-800 mb-1">Phase 2 — Energy Yield Formula</p>
+              <p className="font-semibold text-amber-800 mb-1">Phase 2 — Solar Energy Potential Formula</p>
               <p className="text-amber-700 text-xs">
-                The predicted GHI is multiplied by rooftop area, panel efficiency (19.2%), and a performance ratio (78%) to estimate <strong>annual energy output in kWh/year</strong>. This matches standard solar yield methodology (Equation 5 in the thesis).
+                The predicted GHI is multiplied by rooftop area to estimate <strong>daily solar energy potential in kWh/day</strong>. This is the total solar energy incident on the rooftop surface — a theoretical value before any conversion to electricity. Panel efficiency and system losses are outside the scope of this study.
               </p>
             </div>
           </div>
-          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700">
-            Annual Output = Rooftop Area × 0.192 × GHI (kWh/m²/day) × 365 × 0.78
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 space-y-1">
+            <p>Daily SEP (kWh/day) = Rooftop Area (m²) × GHI (kWh/m²/day)</p>
+            <p>Annual SEP (kWh/year) = Daily SEP × 365</p>
           </div>
         </CardContent>
       </Card>
@@ -222,7 +223,7 @@ export function Help() {
                 'Type an address or click on the map to place a pin.',
                 'Click "Predict Solar Potential" — the backend fetches live OSM building geometry for that exact coordinate.',
                 'The FI-AdaBoost model predicts GHI (kWh/m²/day).',
-                'Annual energy estimate is calculated locally: Area × 0.192 × GHI × 365 × 0.78.',
+                'Solar Energy Potential is calculated locally: Daily SEP = Area × GHI; Annual SEP = Daily SEP × 365.',
               ],
             },
             {
@@ -314,8 +315,8 @@ export function Help() {
                 a: 'If the Overpass API returns no buildings within 100 m, the backend silently falls back to the nearest training dataset point using a KD-tree spatial index. The prediction will still return — the feature values will come from the training record geographically closest to your pin.',
               },
               {
-                q: 'What are PANEL_EFF and PERF_RATIO?',
-                a: 'Panel efficiency (19.2%) represents a typical modern monocrystalline silicon panel. Performance ratio (78%) accounts for system losses — inverter efficiency, wiring, dust, temperature derating, and downtime. These are fixed constants; individual systems will vary.',
+                q: 'Why is Solar Energy Potential different from actual electricity output?',
+                a: 'Solar Energy Potential (SEP) in this study represents the total solar energy incident on the rooftop surface — calculated as GHI × Rooftop Area. It is a theoretical value before any energy conversion. Actual electricity output depends on panel efficiency, inverter losses, wiring, shading, and other installation-specific factors, which are outside the scope of this study.',
               },
             ].map(({ q, a }, i) => (
               <AccordionItem key={i} value={`item-${i}`} className="border border-slate-200 rounded-xl px-4 bg-white shadow-sm">

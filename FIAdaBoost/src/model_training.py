@@ -75,8 +75,6 @@ FI_MODEL_FILE       = os.path.join(MODEL_DIR, "fi_adaboost.pkl")
 
 # ── Constants ─────────────────────────────────────────────────────────────────
 RANDOM_SEED   = 42
-PANEL_EFF     = 0.192
-PERF_RATIO    = 0.78
 DAYS_PER_YEAR = 365
 KWH_TO_J      = 3_600_000
 
@@ -529,11 +527,10 @@ def forecast_solar_energy(
 ) -> pd.DataFrame:
     X_all    = df[feature_cols].values.astype(float)
     y_pred_J = model.predict(X_all)
-    H_annual = (y_pred_J / KWH_TO_J) * DAYS_PER_YEAR
+    H_daily  = y_pred_J / KWH_TO_J                        # GHI in kWh/m²/day
     result   = df[["lat", "lon", "rooftop_area_sq_m"]].copy()
-    result[f"{label}_solar_kWh_yr"] = (
-        df["rooftop_area_sq_m"] * PANEL_EFF * H_annual * PERF_RATIO
-    )
+    result[f"{label}_SEP_kWh_day"] = df["rooftop_area_sq_m"] * H_daily
+    result[f"{label}_SEP_kWh_yr"]  = result[f"{label}_SEP_kWh_day"] * DAYS_PER_YEAR
     return result
 
 
@@ -741,12 +738,12 @@ def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
 
 def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     merged = ada_fcast.merge(
-        fi_fcast[["lat", "lon", "fi_solar_kWh_yr"]],
+        fi_fcast[["lat", "lon", "fi_SEP_kWh_day", "fi_SEP_kWh_yr"]],
         on=["lat", "lon"],
         how="left",
     )
-    merged["difference_kWh_yr"] = (
-        merged["ada_solar_kWh_yr"] - merged["fi_solar_kWh_yr"]
+    merged["difference_SEP_kWh_yr"] = (
+        merged["ada_SEP_kWh_yr"] - merged["fi_SEP_kWh_yr"]
     )
     path = os.path.join(RESULTS_DIR, "forecast_per_building.csv")
     merged.to_csv(path, index=False)
@@ -846,15 +843,15 @@ def plot_metrics_comparison(ada_m: dict, fi_m: dict):
 def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
     fig, axes = plt.subplots(1, 2, figsize=(14, 5))
     for ax, fcast, col, color, title in [
-        (axes[0], ada_fcast, "ada_solar_kWh_yr", C_ADA, "AdaBoost Baseline"),
-        (axes[1], fi_fcast,  "fi_solar_kWh_yr",  C_FI,  "FI-AdaBoost Proposed"),
+        (axes[0], ada_fcast, "ada_SEP_kWh_yr", C_ADA, "AdaBoost Baseline"),
+        (axes[1], fi_fcast,  "fi_SEP_kWh_yr",  C_FI,  "FI-AdaBoost Proposed"),
     ]:
         data = fcast[col].dropna()
         ax.hist(data, bins=40, color=color, edgecolor="white", alpha=0.85)
         ax.axvline(data.mean(), color="black", linestyle="--", linewidth=1.2,
                    label=f"Mean: {data.mean():,.0f}")
         ax.set_title(title, fontsize=12, fontweight="bold")
-        ax.set_xlabel("Solar Energy Yield (kWh/year)", fontsize=10)
+        ax.set_xlabel("Solar Energy Potential (kWh/year)", fontsize=10)
         ax.set_ylabel("Number of Buildings", fontsize=10)
         ax.legend(fontsize=9)
         ax.spines["top"].set_visible(False)
@@ -867,8 +864,8 @@ def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
 
 
 def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
-    ada_kwh = ada_fcast["ada_solar_kWh_yr"].sum()
-    fi_kwh  = fi_fcast["fi_solar_kWh_yr"].sum()
+    ada_kwh = ada_fcast["ada_SEP_kWh_yr"].sum()
+    fi_kwh  = fi_fcast["fi_SEP_kWh_yr"].sum()
     fig, ax = plt.subplots(figsize=(8, 5))
     bars = ax.bar(["AdaBoost\n(Baseline)", "FI-AdaBoost\n(Proposed)"],
                   [ada_kwh, fi_kwh], color=[C_ADA, C_FI], edgecolor="black", alpha=0.85, width=0.45)
@@ -1025,8 +1022,8 @@ def main():
     ada_fcast = forecast_solar_energy(df, ada, BASELINE_FEATURES, label="ada")
     fi_fcast  = forecast_solar_energy(df, fi,  FI_FEATURES,       label="fi")
 
-    print(f"  Baseline   total: {ada_fcast['ada_solar_kWh_yr'].sum():>18,.2f} kWh/year")
-    print(f"  FI-AdaBoost total: {fi_fcast['fi_solar_kWh_yr'].sum():>18,.2f} kWh/year")
+    print(f"  Baseline   total: {ada_fcast['ada_SEP_kWh_yr'].sum():>18,.2f} kWh/year")
+    print(f"  FI-AdaBoost total: {fi_fcast['fi_SEP_kWh_yr'].sum():>18,.2f} kWh/year")
 
     # Persist trained models
     joblib.dump(ada, BASELINE_MODEL_FILE)
