@@ -10,7 +10,8 @@ METHODOLOGY (Two-Phase Pipeline)
   PHASE 1: MACHINE LEARNING (fair comparison)
   - Both models predict the SAME target: effective GHI (J/m²/day),
     pvlib POA-adjusted per building (Fix 1 — aligned targets).
-  - Both models use the SAME 8 features (Fix 6 — no log transforms):
+  - Baseline AdaBoost uses 3 features: lat, lon, clear_sky_ratio.
+    FI-AdaBoost uses all 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
   - Hyperparameters tuned via Optuna + 5-fold KFold (Fix 4).
@@ -82,16 +83,17 @@ KWH_TO_J      = 3_600_000
 np.random.seed(RANDOM_SEED)
 
 
-# ── Feature sets — identical for fair algorithm comparison (Fix 1 + Fix 6) ───
+# ── Feature sets ──────────────────────────────────────────────────────────────
 # Both models predict Target_eff_J (pvlib POA-adjusted effective GHI).
-# Both use the same 8 features. The only difference is the boosting algorithm.
+# Baseline AdaBoost uses 3 features (lat, lon, clear_sky_ratio).
+# FI-AdaBoost uses all 8 features. The only algorithmic difference is the boosting update.
 # Log transforms removed (Fix 6): raw shading_factor and SEI_norm are used.
 # clear_sky_ratio and sunshine_hours added from §2.2.2 (Fix 3).
 SHARED_FEATURES   = [
     "lat", "lon", "azimuth", "orientation_score",
     "shading_factor", "SEI_norm", "clear_sky_ratio", "sunshine_hours",
 ]
-BASELINE_FEATURES = SHARED_FEATURES
+BASELINE_FEATURES = ["lat", "lon", "clear_sky_ratio"]
 FI_FEATURES       = SHARED_FEATURES
 TARGET_COL        = "Target_eff_J"
 
@@ -122,11 +124,11 @@ def _pvlib_features(lat: float, lon: float) -> dict:
     Returns ghi_clear_annual (kWh/m²/day) and sunshine_hours (hrs/day).
     ~9 unique grid cells cover Davao City — fast after first batch.
     """
-    key = (round(lat, 2), round(lon, 2))
+    key = (round(lat, 1), round(lon, 1))
     if key in _pvlib_cache:
         return _pvlib_cache[key]
 
-    loc   = pvlib.location.Location(lat, lon, altitude=30, tz="Asia/Manila")
+    loc   = pvlib.location.Location(round(lat, 1), round(lon, 1), altitude=30, tz="Asia/Manila")
     times = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
     cs    = loc.get_clearsky(times, model="ineichen")
 
@@ -197,14 +199,25 @@ def load_dataset() -> pd.DataFrame:
         df.to_csv(path, index=False)
 
     # §2.2.2 Meteorological features per spatial point (Fix 3)
-    print("  Computing clear_sky_ratio and sunshine_hours …", flush=True)
-    pvlib_feats = df.apply(
-        lambda r: pd.Series(_pvlib_features(r["lat"], r["lon"])), axis=1
+    needs_pvlib = (
+        "clear_sky_ratio" not in df.columns
+        or "sunshine_hours" not in df.columns
+        or df["clear_sky_ratio"].isna().any()
+        or df["sunshine_hours"].isna().any()
     )
-    df["sunshine_hours"]  = pvlib_feats["sunshine_hours"]
-    df["clear_sky_ratio"] = (
-        df["GHI_mean_2024"] / pvlib_feats["ghi_clear_annual"]
-    ).clip(0.0, 1.5)
+    if needs_pvlib:
+        print("  Computing clear_sky_ratio and sunshine_hours …", flush=True)
+        pvlib_feats = df.apply(
+            lambda r: pd.Series(_pvlib_features(r["lat"], r["lon"])), axis=1
+        )
+        df["sunshine_hours"]  = pvlib_feats["sunshine_hours"]
+        df["clear_sky_ratio"] = (
+            df["GHI_mean_2024"] / pvlib_feats["ghi_clear_annual"]
+        ).clip(0.0, 1.5)
+        df.to_csv(path, index=False)
+        print("  Saved pvlib features back to CSV — future runs will skip this step.", flush=True)
+    else:
+        print("  Using pre-computed clear_sky_ratio and sunshine_hours.", flush=True)
 
     return df
 

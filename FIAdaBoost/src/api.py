@@ -35,6 +35,7 @@ from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
 from sklearn.model_selection import train_test_split
 
 from src.model_runtime import (
+    BASELINE_FEATURES,
     DEFAULT_LAT_RANGE,
     DEFAULT_LON_RANGE,
     DEFAULT_SEI_NORMALIZER,
@@ -674,25 +675,25 @@ class ModelContext:
             raise ValueError("Integrated dataset became empty after dropping NaNs.")
         return df
 
-    def _train_model(self, model_cls, model_file: Path) -> object:
+    def _train_model(self, model_cls, model_file: Path, feature_cols: list[str] = SHARED_FEATURES) -> object:
         if self.training_df is None:
             self.training_df = self._load_training_dataset()
 
-        X = self.training_df[SHARED_FEATURES].astype(float)
+        X = self.training_df[feature_cols].astype(float)
         y = self.training_df["effective_GHI_J"].astype(float)
         model = model_cls()
         model.fit(X, y)
         joblib.dump(model, model_file)
         return model
 
-    def _load_or_train_model(self, model_cls, model_file: Path) -> object:
-        expected_count = len(SHARED_FEATURES)
+    def _load_or_train_model(self, model_cls, model_file: Path, feature_cols: list[str] = SHARED_FEATURES) -> object:
+        expected_count = len(feature_cols)
         if model_file.exists():
             loaded = self._load_model_file(model_file)
             if loaded is not None and self._model_supports_feature_count(loaded, expected_count):
                 return loaded
 
-        return self._train_model(model_cls, model_file)
+        return self._train_model(model_cls, model_file, feature_cols)
 
     def _load_metrics_from_results(self) -> bool:
         if not METRICS_FILE.exists():
@@ -779,17 +780,19 @@ class ModelContext:
         elif getattr(self.fi_model, "feature_importances_", None) is not None:
             fi_importance = np.asarray(self.fi_model.feature_importances_, dtype=float)
 
-        baseline_importance = np.asarray(
-            getattr(self.baseline_model, "feature_importances_", np.zeros(len(SHARED_FEATURES))),
+        baseline_imp_raw = np.asarray(
+            getattr(self.baseline_model, "feature_importances_", np.zeros(len(BASELINE_FEATURES))),
             dtype=float,
         )
+        baseline_imp_map = {
+            feat: float(baseline_imp_raw[i]) if i < len(baseline_imp_raw) else 0.0
+            for i, feat in enumerate(BASELINE_FEATURES)
+        }
 
         ranking: list[dict[str, str | float | int]] = []
         for idx, feature in enumerate(SHARED_FEATURES):
             fi_value = float(fi_importance[idx] if idx < len(fi_importance) else 0.0)
-            base_value = float(
-                baseline_importance[idx] if idx < len(baseline_importance) else 0.0
-            )
+            base_value = baseline_imp_map.get(feature, 0.0)
             ranking.append(
                 {
                     "feature": feature,
@@ -813,10 +816,11 @@ class ModelContext:
             if self.fi_model is not None and self.baseline_model is not None:
                 return
 
-            self.fi_model = self._load_or_train_model(FIAdaBoostRegressor, FI_MODEL_FILE)
+            self.fi_model = self._load_or_train_model(FIAdaBoostRegressor, FI_MODEL_FILE, SHARED_FEATURES)
             self.baseline_model = self._load_or_train_model(
                 BaselineAdaBoost,
                 BASELINE_MODEL_FILE,
+                BASELINE_FEATURES,
             )
 
             self._load_metrics_from_results()
@@ -851,10 +855,11 @@ class ModelContext:
             shuffle=True,
         )
         test_df = self.training_df.iloc[test_idx].reset_index(drop=True)
-        X_test = test_df[SHARED_FEATURES].astype(float)
+        X_test_fi = test_df[SHARED_FEATURES].astype(float)
+        X_test_baseline = test_df[BASELINE_FEATURES].astype(float)
         y_test = test_df["effective_GHI_J"].astype(float).to_numpy() / KWH_TO_J
-        baseline_pred = np.asarray(self.baseline_model.predict(X_test), dtype=float) / KWH_TO_J
-        fi_pred = np.asarray(self.fi_model.predict(X_test), dtype=float) / KWH_TO_J
+        baseline_pred = np.asarray(self.baseline_model.predict(X_test_baseline), dtype=float) / KWH_TO_J
+        fi_pred = np.asarray(self.fi_model.predict(X_test_fi), dtype=float) / KWH_TO_J
 
         self.performance_metrics = {
             "baseline": self._evaluate_metrics(y_test, baseline_pred),
@@ -903,10 +908,11 @@ class ModelContext:
             shuffle=True,
         )
         test_df = self.training_df.iloc[test_idx].reset_index(drop=True)
-        X_test = test_df[SHARED_FEATURES].astype(float)
+        X_test_fi = test_df[SHARED_FEATURES].astype(float)
+        X_test_baseline = test_df[BASELINE_FEATURES].astype(float)
         y_kwh = test_df["effective_GHI_J"].astype(float).to_numpy() / KWH_TO_J
-        baseline_pred = np.asarray(self.baseline_model.predict(X_test), dtype=float) / KWH_TO_J
-        fi_pred = np.asarray(self.fi_model.predict(X_test), dtype=float) / KWH_TO_J
+        baseline_pred = np.asarray(self.baseline_model.predict(X_test_baseline), dtype=float) / KWH_TO_J
+        fi_pred = np.asarray(self.fi_model.predict(X_test_fi), dtype=float) / KWH_TO_J
 
         if not self.performance_metrics:
             self._compute_global_metrics_from_dataset()
@@ -1111,10 +1117,11 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
 
     try:
         osm, nasa, pvlib_features = _live_feature_bundle(payload.lat, payload.lng)
-        X = _build_feature_frame(payload.lat, payload.lng, osm, nasa, pvlib_features)
+        X_fi = _build_feature_frame(payload.lat, payload.lng, osm, nasa, pvlib_features)
+        X_baseline = X_fi[BASELINE_FEATURES]
 
-        baseline_ghi_j = float(ctx.baseline_model.predict(X)[0])
-        fi_ghi_j = float(ctx.fi_model.predict(X)[0])
+        baseline_ghi_j = float(ctx.baseline_model.predict(X_baseline)[0])
+        fi_ghi_j = float(ctx.fi_model.predict(X_fi)[0])
 
         baseline_result = _build_response(baseline_ghi_j, osm, nasa, pvlib_features)
         fi_result = _build_response(fi_ghi_j, osm, nasa, pvlib_features)

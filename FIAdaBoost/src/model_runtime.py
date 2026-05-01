@@ -22,6 +22,8 @@ SHARED_FEATURES = [
     "sunshine_hours",
 ]
 
+BASELINE_FEATURES = ["lat", "lon", "clear_sky_ratio"]
+
 # Learned SEI normalization reference from the training rooftop feature set.
 DEFAULT_SEI_NORMALIZER = 5368.320870273783
 
