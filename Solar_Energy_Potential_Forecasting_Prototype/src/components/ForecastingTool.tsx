@@ -531,7 +531,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                       </p>
                     </div>
                     <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-                      Solar Energy Potential = predicted irradiance x rooftop area. This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
+                        This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
                     </p>
                     <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
                       <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Scope and Assumptions</p>
