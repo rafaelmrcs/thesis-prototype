@@ -61,7 +61,7 @@ export function Help() {
             <div className="rounded-xl border border-amber-100 bg-amber-50 p-4">
               <p className="font-semibold text-amber-800 mb-1">Phase 2 — Solar Energy Potential Formula</p>
               <p className="text-amber-700 text-xs">
-                The predicted GHI is multiplied by rooftop area to estimate <strong>daily solar energy potential in kWh/day</strong>. This is the total solar energy incident on the rooftop surface — a theoretical value before any conversion to electricity. Panel efficiency and system losses are outside the scope of this study.
+                The predicted GHI is multiplied by rooftop area to estimate <strong>daily solar energy potential in kWh/day</strong>. This is the total solar energy incident on the rooftop surface: a theoretical value before any conversion to electricity. The calculation assumes the whole mapped rooftop area is available for solar collection and does not include panel efficiency, performance ratio, inverter losses, sensor data, or a specific panel installation.
               </p>
             </div>
           </div>
@@ -316,7 +316,7 @@ export function Help() {
               },
               {
                 q: 'Why is Solar Energy Potential different from actual electricity output?',
-                a: 'Solar Energy Potential (SEP) in this study represents the total solar energy incident on the rooftop surface — calculated as GHI × Rooftop Area. It is a theoretical value before any energy conversion. Actual electricity output depends on panel efficiency, inverter losses, wiring, shading, and other installation-specific factors, which are outside the scope of this study.',
+                a: 'Solar Energy Potential (SEP) in this study represents the total solar energy incident on the rooftop surface, calculated as GHI x Rooftop Area. It assumes the whole mapped rooftop area is available for solar collection. It is not usable PV electricity, so panel efficiency, inverter losses, performance ratio, sensor data, and specific panel installation design are outside this study scope.',
               },
             ].map(({ q, a }, i) => (
               <AccordionItem key={i} value={`item-${i}`} className="border border-slate-200 rounded-xl px-4 bg-white shadow-sm">
@@ -342,3 +342,4 @@ export function Help() {
     </div>
   );
 }
+

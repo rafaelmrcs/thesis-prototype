@@ -98,6 +98,7 @@ class PredictRequest(BaseModel):
 
 class PredictResponse(BaseModel):
     solarPotential: float
+    predictedIrradiance: float
     rooftopArea: float
     solarExposureIndex: float
     orientation: str
@@ -536,6 +537,8 @@ def _build_response(
     pvlib_features: dict[str, float],
 ) -> PredictResponse:
     ghi_kwh = float(ghi_j) / KWH_TO_J
+    rooftop_area = float(osm["rooftop_area_sq_m"])
+    theoretical_energy_kwh_day = ghi_kwh * rooftop_area
     kt = float(np.clip(float(nasa["kt"]), 0.0, 1.0))
     clear_sky_ratio = float(
         np.clip(
@@ -545,8 +548,9 @@ def _build_response(
         )
     )
     return PredictResponse(
-        solarPotential=ghi_kwh,
-        rooftopArea=float(osm["rooftop_area_sq_m"]),
+        solarPotential=theoretical_energy_kwh_day,
+        predictedIrradiance=ghi_kwh,
+        rooftopArea=rooftop_area,
         solarExposureIndex=float(osm["SEI_norm"]),
         orientation=_orientation_label(float(osm["azimuth_deg"])),
         azimuth=float(osm["azimuth_deg"]),
@@ -1127,12 +1131,15 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
         fi_result = _build_response(fi_ghi_j, osm, nasa, pvlib_features)
 
         diff_kwh = fi_result.solarPotential - baseline_result.solarPotential
+        irradiance_diff_kwh_m2 = (
+            fi_result.predictedIrradiance - baseline_result.predictedIrradiance
+        )
         improvement_pct = (
             diff_kwh / baseline_result.solarPotential * 100.0
             if baseline_result.solarPotential != 0
             else 0.0
         )
-        confidence = ctx.confidence_level(payload.lat, payload.lng, diff_kwh)
+        confidence = ctx.confidence_level(payload.lat, payload.lng, irradiance_diff_kwh_m2)
 
         baseline_metrics = ctx.performance_metrics.get(
             "baseline",

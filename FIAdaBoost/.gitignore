@@ -7,5 +7,7 @@
 # /models/
 # Ignore any virtual environments
 /venv/
+/.venv/
+/.tmp/
 /__pycache__/
 *.pyc

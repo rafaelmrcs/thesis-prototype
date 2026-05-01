@@ -7,6 +7,8 @@
 **/*.pyd
 **/.venv/
 **/venv/
+**/.tmp/
+**/.npm-cache/
 **/node_modules/
 **/dist/
 FIAdaBoost/cache/
