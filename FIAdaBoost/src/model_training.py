@@ -27,8 +27,11 @@ METHODOLOGY (Two-Phase Pipeline)
   - Saves cv_fold_metrics.csv and dm_test_results.csv.
 
 
-  PHASE 2: ENERGY FORECASTING
-  - Applies trained spatial model to 3,000 buildings for annual kWh.
+  PHASE 2: SOLAR ENERGY POTENTIAL FORECASTING
+  - Converts predicted irradiance into theoretical rooftop solar energy
+    potential: SEP = predicted GHI (kWh/m2/day) x OSM rooftop area (m2).
+  - Panel efficiency and performance ratio are intentionally excluded because
+    electrical PV output is outside this study scope.
 ────────────────────────────────────────────────────────────────────────────
 """
 
@@ -517,7 +520,7 @@ def save_dm_results(dm: dict, suffix: str = "") -> str:
 
 
 # =============================================================================
-# PHASE 2: SOLAR ENERGY FORECAST
+# PHASE 2: THEORETICAL SOLAR ENERGY POTENTIAL FORECAST
 # =============================================================================
 def forecast_solar_energy(
     df: pd.DataFrame,
@@ -527,8 +530,9 @@ def forecast_solar_energy(
 ) -> pd.DataFrame:
     X_all    = df[feature_cols].values.astype(float)
     y_pred_J = model.predict(X_all)
-    H_daily  = y_pred_J / KWH_TO_J                        # GHI in kWh/m²/day
+    H_daily  = y_pred_J / KWH_TO_J                        # predicted irradiance, kWh/m2/day
     result   = df[["lat", "lon", "rooftop_area_sq_m"]].copy()
+    result[f"{label}_predicted_irradiance_kWh_m2_day"] = H_daily
     result[f"{label}_SEP_kWh_day"] = df["rooftop_area_sq_m"] * H_daily
     result[f"{label}_SEP_kWh_yr"]  = result[f"{label}_SEP_kWh_day"] * DAYS_PER_YEAR
     return result
@@ -738,7 +742,15 @@ def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
 
 def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     merged = ada_fcast.merge(
-        fi_fcast[["lat", "lon", "fi_SEP_kWh_day", "fi_SEP_kWh_yr"]],
+        fi_fcast[
+            [
+                "lat",
+                "lon",
+                "fi_predicted_irradiance_kWh_m2_day",
+                "fi_SEP_kWh_day",
+                "fi_SEP_kWh_yr",
+            ]
+        ],
         on=["lat", "lon"],
         how="left",
     )
@@ -856,7 +868,7 @@ def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
         ax.legend(fontsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-    plt.suptitle("Per-Building Solar Energy Yield Distribution — Phase 2 Forecast",
+    plt.suptitle("Per-Building Theoretical Solar Energy Potential Distribution — Phase 2 Forecast",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "energy_distribution.png"), dpi=300, bbox_inches="tight")
@@ -872,7 +884,7 @@ def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame
     for bar, val in zip(bars, [ada_kwh, fi_kwh]):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
                 f"{val:,.0f} kWh", ha="center", va="bottom", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Total Solar Energy Yield (kWh/year)", fontsize=11)
+    ax.set_ylabel("Total Theoretical Solar Energy Potential (kWh/year)", fontsize=11)
     ax.set_title("Total Rooftop Solar Potential — Davao City\nPhase 2 Energy Forecast",
                  fontsize=13, fontweight="bold")
     ax.set_ylim(0, max(ada_kwh, fi_kwh) * 1.18)
