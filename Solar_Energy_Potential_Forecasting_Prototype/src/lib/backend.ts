@@ -31,6 +31,27 @@ export function getBackendCandidates(): string[] {
   return [];
 }
 
+let _backendBaseUrlPromise: Promise<string> | null = null;
+
+export function getBackendBaseUrl(): Promise<string> {
+  if (!_backendBaseUrlPromise) {
+    _backendBaseUrlPromise = (async () => {
+      const candidates = getBackendCandidates();
+      if (candidates.length === 0) return "";
+      for (const url of candidates) {
+        try {
+          const res = await fetch(`${url}/health`, { signal: AbortSignal.timeout(3000) });
+          if (res.ok) return url;
+        } catch {
+          // try next
+        }
+      }
+      return candidates[0];
+    })();
+  }
+  return _backendBaseUrlPromise;
+}
+
 export async function fetchBackendJson<T>(path: string, init?: RequestInit): Promise<T> {
   const backendCandidates = getBackendCandidates();
 

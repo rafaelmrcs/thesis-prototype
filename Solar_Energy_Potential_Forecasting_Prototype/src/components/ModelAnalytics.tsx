@@ -148,14 +148,14 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   <p className="text-xs text-slate-500 uppercase tracking-wide">Saved Test Metrics (from results/metrics_summary.csv)</p>
                   <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
                     <div>
-                      <p className="text-xs text-slate-500">RMSE (kWh/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {formatExact(liveComparison.performanceMetricsComparison.baseline.rmse, 6)}</p>
-                      <p className="text-sm text-orange-600">FI: {formatExact(liveComparison.performanceMetricsComparison.fiAdaBoost.rmse, 6)}</p>
+                      <p className="text-xs text-slate-500">RMSE (J/m²/day)</p>
+                      <p className="text-sm text-slate-700">Baseline: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.baseline.rmse)}</p>
+                      <p className="text-sm text-orange-600">FI: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.fiAdaBoost.rmse)}</p>
                     </div>
                     <div>
-                      <p className="text-xs text-slate-500">MAE (kWh/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {formatExact(liveComparison.performanceMetricsComparison.baseline.mae, 6)}</p>
-                      <p className="text-sm text-orange-600">FI: {formatExact(liveComparison.performanceMetricsComparison.fiAdaBoost.mae, 6)}</p>
+                      <p className="text-xs text-slate-500">MAE (J/m²/day)</p>
+                      <p className="text-sm text-slate-700">Baseline: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.baseline.mae)}</p>
+                      <p className="text-sm text-orange-600">FI: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.fiAdaBoost.mae)}</p>
                     </div>
                     <div>
                       <p className="text-xs text-slate-500">R²</p>

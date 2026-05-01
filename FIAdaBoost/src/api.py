@@ -28,6 +28,7 @@ import pvlib
 import requests
 from fastapi import FastAPI, HTTPException
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.staticfiles import StaticFiles
 from pydantic import BaseModel, Field
 from scipy.spatial import cKDTree
 from sklearn.metrics import mean_absolute_error, mean_squared_error, r2_score
@@ -54,7 +55,12 @@ INTEGRATED_DATA_FILE = PROCESSED_DIR / "integrated_dataset.csv"
 FI_MODEL_FILE = MODEL_DIR / "fi_adaboost.pkl"
 BASELINE_MODEL_FILE = MODEL_DIR / "baseline_adaboost.pkl"
 METRICS_FILE = RESULTS_DIR / "metrics_summary.csv"
-CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics.csv"
+CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics_daily.csv"
+SPATIAL_CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics.csv"
+DM_SPATIAL_FILE = RESULTS_DIR / "dm_test_results_spatial.csv"
+DM_DAILY_FILE = RESULTS_DIR / "dm_test_results_daily.csv"
+DAILY_METRICS_FILE = RESULTS_DIR / "daily_metrics_summary.csv"
+SPLIT_INFO_FILE = RESULTS_DIR / "train_test_split_info.csv"
 
 MODEL_DIR.mkdir(parents=True, exist_ok=True)
 RESULTS_DIR.mkdir(parents=True, exist_ok=True)
@@ -151,6 +157,59 @@ class TrainingAnalyticsResponse(BaseModel):
     residualSummary: dict[str, float]
 
 
+class SpatialCVFold(BaseModel):
+    fold: int
+    baseline_train_rmse: float
+    baseline_val_rmse: float
+    baseline_train_r2: float
+    baseline_val_r2: float
+    fi_train_rmse: float
+    fi_val_rmse: float
+    fi_train_r2: float
+    fi_val_r2: float
+
+
+class SpatialCVResponse(BaseModel):
+    folds: list[SpatialCVFold]
+    average: dict[str, float]
+
+
+class DMTestResult(BaseModel):
+    dm_statistic: float
+    p_value: float
+    significant: bool
+    interpretation: str
+    n_samples: int
+    mean_loss_diff_j2: float
+
+
+class DMTestResponse(BaseModel):
+    spatial: DMTestResult
+    daily: DMTestResult
+
+
+class DailyMetricsSummary(BaseModel):
+    model: str
+    split: str
+    rmse_j: float
+    mae_j: float
+    r2: float
+
+
+class DailyMetricsResponse(BaseModel):
+    results: list[DailyMetricsSummary]
+
+
+class SplitInfoResponse(BaseModel):
+    total_samples: int
+    train_samples: int
+    test_samples: int
+    test_fraction: float
+    split_method: str
+    random_seed: int
+    target_col: str
+
+
 class LiveFeatureError(RuntimeError):
     def __init__(self, detail: str, status_code: int = 502) -> None:
         super().__init__(detail)
@@ -204,6 +263,7 @@ app.add_middleware(
     allow_methods=["*"],
     allow_headers=["*"],
 )
+app.mount("/results/images", StaticFiles(directory=str(RESULTS_DIR)), name="results_images")
 
 
 def _rolling_nasa_window() -> tuple[date, date]:
@@ -1135,3 +1195,95 @@ def get_training_analytics() -> TrainingAnalyticsResponse:
         detail = ctx.training_analytics_error or "Training analytics are not available."
         raise HTTPException(status_code=503, detail=detail)
     return ctx.training_analytics
+
+
+@app.get("/cv-metrics/spatial", response_model=SpatialCVResponse)
+def get_spatial_cv_metrics() -> SpatialCVResponse:
+    if not SPATIAL_CV_METRICS_FILE.exists():
+        raise HTTPException(status_code=503, detail="Spatial CV metrics file is not available.")
+    try:
+        df = pd.read_csv(SPATIAL_CV_METRICS_FILE)
+        folds = [
+            SpatialCVFold(
+                fold=int(row["fold"]),
+                baseline_train_rmse=float(row["ada_train_RMSE_J"]),
+                baseline_val_rmse=float(row["ada_val_RMSE_J"]),
+                baseline_train_r2=float(row["ada_train_R2"]),
+                baseline_val_r2=float(row["ada_val_R2"]),
+                fi_train_rmse=float(row["fi_train_RMSE_J"]),
+                fi_val_rmse=float(row["fi_val_RMSE_J"]),
+                fi_train_r2=float(row["fi_train_R2"]),
+                fi_val_r2=float(row["fi_val_R2"]),
+            )
+            for _, row in df.iterrows()
+        ]
+        average = {
+            "baseline_val_rmse": float(np.mean([f.baseline_val_rmse for f in folds])),
+            "baseline_val_r2": float(np.mean([f.baseline_val_r2 for f in folds])),
+            "fi_val_rmse": float(np.mean([f.fi_val_rmse for f in folds])),
+            "fi_val_r2": float(np.mean([f.fi_val_r2 for f in folds])),
+        }
+        return SpatialCVResponse(folds=folds, average=average)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load spatial CV metrics: {exc}") from exc
+
+
+@app.get("/dm-test", response_model=DMTestResponse)
+def get_dm_test() -> DMTestResponse:
+    for path in (DM_SPATIAL_FILE, DM_DAILY_FILE):
+        if not path.exists():
+            raise HTTPException(status_code=503, detail=f"DM test file is not available: {path.name}")
+    try:
+        def _read_dm(path: Path) -> DMTestResult:
+            row = pd.read_csv(path).iloc[0]
+            return DMTestResult(
+                dm_statistic=float(row["DM_statistic"]),
+                p_value=float(row["p_value"]),
+                significant=bool(row["significant_at_0.05"]),
+                interpretation=str(row["interpretation"]),
+                n_samples=int(row["n_test_samples"]),
+                mean_loss_diff_j2=float(row["mean_loss_diff_J2"]),
+            )
+        return DMTestResponse(spatial=_read_dm(DM_SPATIAL_FILE), daily=_read_dm(DM_DAILY_FILE))
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load DM test results: {exc}") from exc
+
+
+@app.get("/daily-metrics", response_model=DailyMetricsResponse)
+def get_daily_metrics() -> DailyMetricsResponse:
+    if not DAILY_METRICS_FILE.exists():
+        raise HTTPException(status_code=503, detail="Daily metrics file is not available.")
+    try:
+        df = pd.read_csv(DAILY_METRICS_FILE)
+        results = [
+            DailyMetricsSummary(
+                model=str(row["model"]),
+                split=str(row["split"]),
+                rmse_j=float(row["RMSE_J"]),
+                mae_j=float(row["MAE_J"]),
+                r2=float(row["R2"]),
+            )
+            for _, row in df.iterrows()
+        ]
+        return DailyMetricsResponse(results=results)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load daily metrics: {exc}") from exc
+
+
+@app.get("/split-info", response_model=SplitInfoResponse)
+def get_split_info() -> SplitInfoResponse:
+    if not SPLIT_INFO_FILE.exists():
+        raise HTTPException(status_code=503, detail="Split info file is not available.")
+    try:
+        row = pd.read_csv(SPLIT_INFO_FILE).iloc[0]
+        return SplitInfoResponse(
+            total_samples=int(row["total_samples"]),
+            train_samples=int(row["train_samples"]),
+            test_samples=int(row["test_samples"]),
+            test_fraction=float(row["test_fraction"]),
+            split_method=str(row["split_method"]),
+            random_seed=int(row["random_seed"]),
+            target_col=str(row["target_col"]),
+        )
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load split info: {exc}") from exc

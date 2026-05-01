@@ -17,7 +17,7 @@ import {
   YAxis,
 } from 'recharts';
 import { RefreshCw, TrendingDown, TrendingUp } from 'lucide-react';
-import { fetchBackendJson } from '../lib/backend';
+import { fetchBackendJson, getBackendBaseUrl } from '../lib/backend';
 
 // ─── Interfaces ──────────────────────────────────────────────────────────────
 
@@ -80,6 +80,64 @@ interface CVMetricsData {
   };
 }
 
+interface SpatialCVFold {
+  fold: number;
+  baseline_train_rmse: number;
+  baseline_val_rmse: number;
+  baseline_train_r2: number;
+  baseline_val_r2: number;
+  fi_train_rmse: number;
+  fi_val_rmse: number;
+  fi_train_r2: number;
+  fi_val_r2: number;
+}
+
+interface SpatialCVData {
+  folds: SpatialCVFold[];
+  average: {
+    baseline_val_rmse: number;
+    baseline_val_r2: number;
+    fi_val_rmse: number;
+    fi_val_r2: number;
+  };
+}
+
+interface DMTestResult {
+  dm_statistic: number;
+  p_value: number;
+  significant: boolean;
+  interpretation: string;
+  n_samples: number;
+  mean_loss_diff_j2: number;
+}
+
+interface DMTestData {
+  spatial: DMTestResult;
+  daily: DMTestResult;
+}
+
+interface DailyMetricRow {
+  model: string;
+  split: string;
+  rmse_j: number;
+  mae_j: number;
+  r2: number;
+}
+
+interface DailyMetricsData {
+  results: DailyMetricRow[];
+}
+
+interface SplitInfoData {
+  total_samples: number;
+  train_samples: number;
+  test_samples: number;
+  test_fraction: number;
+  split_method: string;
+  random_seed: number;
+  target_col: string;
+}
+
 const KWH_TO_J = 3_600_000;
 
 function formatExact(value: number, fractionDigits = 6): string {
@@ -107,6 +165,11 @@ function formatPercent(value: number, fractionDigits = 6): string {
 export function GlobalModelAnalytics() {
   const [trainingAnalytics, setTrainingAnalytics] = useState<TrainingAnalyticsData | null>(null);
   const [cvMetrics, setCvMetrics] = useState<CVMetricsData | null>(null);
+  const [spatialCv, setSpatialCv] = useState<SpatialCVData | null>(null);
+  const [dmTest, setDmTest] = useState<DMTestData | null>(null);
+  const [dailyMetrics, setDailyMetrics] = useState<DailyMetricsData | null>(null);
+  const [splitInfo, setSplitInfo] = useState<SplitInfoData | null>(null);
+  const [backendBase, setBackendBase] = useState<string>('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState<string | null>(null);
 
@@ -114,12 +177,34 @@ export function GlobalModelAnalytics() {
     setLoading(true);
     setError(null);
     try {
-      const [analytics, cv] = await Promise.all([
+      const base = await getBackendBaseUrl();
+      setBackendBase(base);
+
+      const settled = await Promise.allSettled([
         fetchBackendJson<TrainingAnalyticsData>('/training-analytics'),
         fetchBackendJson<CVMetricsData>('/cv-metrics'),
+        fetchBackendJson<SpatialCVData>('/cv-metrics/spatial'),
+        fetchBackendJson<DMTestData>('/dm-test'),
+        fetchBackendJson<DailyMetricsData>('/daily-metrics'),
+        fetchBackendJson<SplitInfoData>('/split-info'),
       ]);
-      setTrainingAnalytics(analytics);
-      setCvMetrics(cv);
+
+      const [analyticsR, cvR, spatialCvR, dmTestR, dailyR, splitR] = settled;
+
+      if (analyticsR.status === 'fulfilled') setTrainingAnalytics(analyticsR.value);
+      if (cvR.status === 'fulfilled') setCvMetrics(cvR.value);
+      if (spatialCvR.status === 'fulfilled') setSpatialCv(spatialCvR.value);
+      if (dmTestR.status === 'fulfilled') setDmTest(dmTestR.value);
+      if (dailyR.status === 'fulfilled') setDailyMetrics(dailyR.value);
+      if (splitR.status === 'fulfilled') setSplitInfo(splitR.value);
+
+      const primaryFailed = analyticsR.status === 'rejected' && cvR.status === 'rejected';
+      if (primaryFailed) {
+        const msg = analyticsR.status === 'rejected'
+          ? (analyticsR.reason instanceof Error ? analyticsR.reason.message : 'Failed to load analytics')
+          : 'Failed to load analytics';
+        setError(msg);
+      }
     } catch (err) {
       setError(err instanceof Error ? err.message : 'Failed to load global analytics');
     } finally {
@@ -497,6 +582,217 @@ export function GlobalModelAnalytics() {
               </div>
             )}
           </section>
+        </CardContent>
+      </Card>
+
+      {/* ── SECTION 5: Spatial Cross-Validation ─────────────────────────────── */}
+      <Card className="border-2 border-indigo-200 bg-gradient-to-br from-indigo-50 via-violet-50 to-purple-50 shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Spatial Cross-Validation (5-Fold)</CardTitle>
+          <CardDescription>
+            Per-fold train / validation RMSE and R² on the spatial dataset (same domain as the headline metrics).
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {spatialCv ? (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold">Fold</th>
+                    <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J)</th>
+                    <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J)</th>
+                    <th className="px-4 py-3 text-right font-semibold">Ada Val R²</th>
+                    <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J)</th>
+                    <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J)</th>
+                    <th className="px-4 py-3 text-right font-semibold">FI Val R²</th>
+                    <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J)</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {spatialCv.folds.map((f) => (
+                    <tr key={f.fold} className="border-t border-slate-200 hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
+                      <td className="px-4 py-3 text-right">{formatExact(f.baseline_train_rmse, 3)}</td>
+                      <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
+                      <td className="px-4 py-3 text-right">{formatRawR2(f.baseline_val_r2)}</td>
+                      <td className="px-4 py-3 text-right">{formatExact(f.fi_train_rmse, 3)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
+                      <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatRawR2(f.fi_val_r2)}</td>
+                      <td className="px-4 py-3 text-right text-emerald-600">
+                        ↓ {formatExact(f.baseline_val_rmse - f.fi_val_rmse, 3)}
+                      </td>
+                    </tr>
+                  ))}
+                  <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+                    <td className="px-4 py-3">Average</td>
+                    <td className="px-4 py-3 text-right">—</td>
+                    <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
+                    <td className="px-4 py-3 text-right">{formatRawR2(spatialCv.average.baseline_val_r2)}</td>
+                    <td className="px-4 py-3 text-right">—</td>
+                    <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-600">{formatRawR2(spatialCv.average.fi_val_r2)}</td>
+                    <td className="px-4 py-3 text-right text-emerald-600">
+                      ↓ {formatExact(spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse, 3)}
+                    </td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState message={loading ? 'Loading spatial CV…' : 'Spatial CV metrics unavailable.'} />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── SECTION 6: Diebold-Mariano Test ─────────────────────────────────── */}
+      <Card className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Diebold-Mariano Statistical Test</CardTitle>
+          <CardDescription>
+            Formal test of forecast accuracy differences. Significant result (p&nbsp;&lt;&nbsp;0.05) means FI-AdaBoost is statistically more accurate.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {dmTest ? (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold">Domain</th>
+                    <th className="px-4 py-3 text-right font-semibold">DM Statistic</th>
+                    <th className="px-4 py-3 text-right font-semibold">p-value</th>
+                    <th className="px-4 py-3 text-right font-semibold">n</th>
+                    <th className="px-4 py-3 text-left font-semibold">Significant?</th>
+                    <th className="px-4 py-3 text-left font-semibold">Interpretation</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {([['Spatial', dmTest.spatial], ['Daily', dmTest.daily]] as const).map(([label, r]) => (
+                    <tr key={label} className="border-t border-slate-200 hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium">{label}</td>
+                      <td className="px-4 py-3 text-right font-mono">{formatExact(r.dm_statistic, 4)}</td>
+                      <td className="px-4 py-3 text-right font-mono">{r.p_value < 0.0001 ? '< 0.0001' : formatExact(r.p_value, 5)}</td>
+                      <td className="px-4 py-3 text-right">{r.n_samples}</td>
+                      <td className="px-4 py-3">
+                        <span className={`inline-flex items-center rounded-full px-2.5 py-0.5 text-xs font-semibold ${r.significant ? 'bg-emerald-100 text-emerald-800' : 'bg-slate-100 text-slate-600'}`}>
+                          {r.significant ? '✓ Yes (p < 0.05)' : '✗ No'}
+                        </span>
+                      </td>
+                      <td className="px-4 py-3 text-xs text-slate-600">{r.interpretation}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState message={loading ? 'Loading DM test results…' : 'DM test results unavailable.'} />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── SECTION 7: Daily Temporal Metrics ───────────────────────────────── */}
+      <Card className="border-2 border-amber-200 bg-gradient-to-br from-amber-50 via-yellow-50 to-orange-50 shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Daily Temporal Split Metrics</CardTitle>
+          <CardDescription>
+            80/20 temporal split on day-level aggregates — harder than spatial because the test set is strictly future dates.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {dailyMetrics ? (
+            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+              <table className="w-full text-sm">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-4 py-3 text-left font-semibold">Model</th>
+                    <th className="px-4 py-3 text-right font-semibold">RMSE (J/day)</th>
+                    <th className="px-4 py-3 text-right font-semibold">MAE (J/day)</th>
+                    <th className="px-4 py-3 text-right font-semibold">R²</th>
+                    <th className="px-4 py-3 text-left font-semibold">Split</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  {dailyMetrics.results.map((r, i) => (
+                    <tr key={i} className="border-t border-slate-200 hover:bg-slate-50">
+                      <td className="px-4 py-3 font-medium">{r.model}</td>
+                      <td className="px-4 py-3 text-right">{r.rmse_j.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right">{r.mae_j.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
+                      <td className="px-4 py-3 text-right">{formatRawR2(r.r2)}</td>
+                      <td className="px-4 py-3 text-xs text-slate-500">{r.split}</td>
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
+          ) : (
+            <EmptyState message={loading ? 'Loading daily metrics…' : 'Daily metrics unavailable.'} />
+          )}
+        </CardContent>
+      </Card>
+
+      {/* ── SECTION 8: Dataset & Split Info ─────────────────────────────────── */}
+      {splitInfo && (
+        <Card className="border-2 border-slate-200 bg-white shadow-xl">
+          <CardHeader>
+            <CardTitle className="text-2xl">Dataset &amp; Split Info</CardTitle>
+            <CardDescription>Configuration used for the saved training run.</CardDescription>
+          </CardHeader>
+          <CardContent>
+            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
+              {[
+                { label: 'Total Samples', value: splitInfo.total_samples.toLocaleString() },
+                { label: 'Train Samples', value: splitInfo.train_samples.toLocaleString() },
+                { label: 'Test Samples', value: splitInfo.test_samples.toLocaleString() },
+                { label: 'Test Fraction', value: `${(splitInfo.test_fraction * 100).toFixed(0)}%` },
+                { label: 'Split Method', value: splitInfo.split_method },
+                { label: 'Random Seed', value: String(splitInfo.random_seed) },
+                { label: 'Target Column', value: splitInfo.target_col },
+              ].map(({ label, value }) => (
+                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">{label}</p>
+                  <p className="mt-1 font-semibold text-slate-900 break-all">{value}</p>
+                </div>
+              ))}
+            </div>
+          </CardContent>
+        </Card>
+      )}
+
+      {/* ── SECTION 9: Research Plots ────────────────────────────────────────── */}
+      <Card className="border-2 border-rose-200 bg-gradient-to-br from-rose-50 via-pink-50 to-fuchsia-50 shadow-xl">
+        <CardHeader>
+          <CardTitle className="text-2xl">Research Plots from Training Run</CardTitle>
+          <CardDescription>
+            Publication-quality figures generated by the training script and served directly from <code>results/</code>.
+          </CardDescription>
+        </CardHeader>
+        <CardContent>
+          {backendBase ? (
+            <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
+              {[
+                { file: 'metrics_comparison.png', caption: 'Metrics Comparison' },
+                { file: 'actual_vs_predicted.png', caption: 'Actual vs Predicted' },
+                { file: 'residuals.png', caption: 'Residual Analysis' },
+                { file: 'overfit_check.png', caption: 'Overfit Check (Train vs Val)' },
+                { file: 'standalone_feature_importances.png', caption: 'Feature Importances' },
+                { file: 'energy_distribution.png', caption: 'Energy Distribution' },
+                { file: 'total_energy_comparison.png', caption: 'Total Energy Comparison' },
+              ].map(({ file, caption }) => (
+                <div key={file} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
+                  <img
+                    src={`${backendBase}/results/images/${file}`}
+                    alt={caption}
+                    className="w-full object-contain"
+                    loading="lazy"
+                  />
+                  <p className="px-3 py-2 text-center text-xs font-medium text-slate-600">{caption}</p>
+                </div>
+              ))}
+            </div>
+          ) : (
+            <EmptyState message={loading ? 'Resolving backend URL…' : 'Backend URL unavailable — cannot load research plots.'} />
+          )}
         </CardContent>
       </Card>
     </div>
