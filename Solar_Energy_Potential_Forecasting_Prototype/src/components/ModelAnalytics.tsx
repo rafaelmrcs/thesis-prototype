@@ -12,6 +12,7 @@ interface ModelAnalyticsProps {
 
 interface PredictSnapshot {
   solarPotential: number;
+  predictedIrradiance: number;
   rooftopArea: number;
   solarExposureIndex: number;
   orientation: string;
@@ -109,24 +110,30 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
             <>
               <div className="grid grid-cols-1 gap-4 md:grid-cols-3">
                 <div className="rounded-xl border-2 border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide">Baseline AdaBoost</p>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Baseline AdaBoost SEP</p>
                   <p className="mt-1 text-3xl font-semibold text-slate-700">
-                    {formatExact(liveComparison.baseline.solarPotential, 6)}
+                    {formatExact(liveComparison.baseline.solarPotential, 2)}
                   </p>
-                  <p className="text-xs text-slate-400">kWh/m²/day (sky irradiance — geometry-blind)</p>
+                  <p className="text-xs text-slate-400">kWh/day theoretical rooftop energy</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Irradiance: {formatExact(liveComparison.baseline.predictedIrradiance, 4)} kWh/m2/day
+                  </p>
                 </div>
                 <div className="rounded-xl border-2 border-orange-200 bg-white p-4 shadow-sm">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost</p>
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost SEP</p>
                   <p className="mt-1 text-3xl font-semibold text-orange-600">
-                    {formatExact(liveComparison.fiAdaBoost.solarPotential, 6)}
+                    {formatExact(liveComparison.fiAdaBoost.solarPotential, 2)}
                   </p>
-                  <p className="text-xs text-slate-400">kWh/m²/day (geometry-adjusted for this rooftop)</p>
+                  <p className="text-xs text-slate-400">kWh/day theoretical rooftop energy</p>
+                  <p className="mt-2 text-xs text-slate-500">
+                    Irradiance: {formatExact(liveComparison.fiAdaBoost.predictedIrradiance, 4)} kWh/m2/day
+                  </p>
                 </div>
                 <div className="rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 p-4 text-white shadow-lg">
                   <p className="text-xs opacity-80 uppercase tracking-wide">Difference</p>
                   <p className="mt-1 text-3xl font-semibold">
                     {liveComparison.improvement.solarPotentialDiff >= 0 ? '+' : ''}
-                    {formatExact(liveComparison.improvement.solarPotentialDiff, 6)}
+                    {formatExact(liveComparison.improvement.solarPotentialDiff, 2)}
                   </p>
                   <p className="text-xs opacity-70">
                     ({liveComparison.improvement.solarPotentialImprovementPct >= 0 ? '+' : ''}
@@ -209,3 +216,4 @@ function SnapshotTile({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
+

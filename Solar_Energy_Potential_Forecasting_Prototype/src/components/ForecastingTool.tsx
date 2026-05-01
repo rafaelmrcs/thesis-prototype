@@ -79,6 +79,7 @@ function parseCoordinatePair(input: string): { lat: number; lng: number } | { er
 
 interface PredictionResult {
   solarPotential: number;
+  predictedIrradiance: number;
   rooftopArea: number;
   solarExposureIndex: number;
   orientation: string;
@@ -124,8 +125,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const lngValue = Number(coordinates.lng);
   const hasValidCoordinates = Number.isFinite(latValue) && Number.isFinite(lngValue);
 
-  const dailyEnergyPotential = prediction
-    ? prediction.rooftopArea * prediction.solarPotential
+  const annualEnergyPotential = prediction
+    ? prediction.solarPotential * 365
     : null;
 
   // Clear prediction when coordinates change
@@ -258,32 +259,34 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     }
   };
 
-  const getSolarRating = (potential: number): { label: string; color: string; description: string; bgGradient: string } => {
-    if (potential >= 5.5) return { 
+  const getSolarRating = (irradiance: number): { label: string; color: string; description: string; bgGradient: string } => {
+    if (irradiance >= 5.5) return { 
       label: 'Excellent', 
       color: 'bg-emerald-500',
       bgGradient: 'from-emerald-500 to-green-600',
-      description: 'Outstanding solar energy potential. Ideal for solar panel installation with strong energy output.'
+      description: 'Outstanding rooftop solar energy potential for the available roof area.'
     };
-    if (potential >= 4.5) return { 
+    if (irradiance >= 4.5) return { 
       label: 'Very Good', 
       color: 'bg-blue-500',
       bgGradient: 'from-blue-500 to-cyan-600',
-      description: 'Strong solar energy potential. Great conditions for solar panel system installation.'
+      description: 'Strong rooftop solar energy potential for the selected building footprint.'
     };
-    if (potential >= 3.5) return { 
+    if (irradiance >= 3.5) return { 
       label: 'Good', 
       color: 'bg-amber-500',
       bgGradient: 'from-amber-500 to-yellow-600',
-      description: 'Moderate solar energy potential. Solar installation is viable with reasonable energy output.'
+      description: 'Moderate rooftop solar energy potential based on irradiance and mapped area.'
     };
     return { 
       label: 'Fair', 
       color: 'bg-orange-500',
       bgGradient: 'from-orange-500 to-red-600',
-      description: 'Lower solar energy potential. Consider optimizing panel placement and angle.'
+      description: 'Lower rooftop solar energy potential compared with stronger irradiance locations.'
     };
   };
+
+  const rating = prediction ? getSolarRating(prediction.predictedIrradiance) : null;
 
   return (
     <div className="space-y-6">
@@ -467,16 +470,16 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
           </div>
 
           {/* Solar Potential Card */}
-          <Card className={`border-2 shadow-2xl bg-gradient-to-br ${getSolarRating(prediction.solarPotential).color === 'bg-emerald-500' ? 'from-emerald-50 via-green-50 to-teal-50 border-emerald-300' : getSolarRating(prediction.solarPotential).color === 'bg-blue-500' ? 'from-blue-50 via-cyan-50 to-sky-50 border-blue-300' : getSolarRating(prediction.solarPotential).color === 'bg-amber-500' ? 'from-amber-50 via-yellow-50 to-orange-50 border-amber-300' : 'from-orange-50 via-red-50 to-rose-50 border-orange-300'}`}>
+          <Card className={`border-2 shadow-2xl bg-gradient-to-br ${rating?.color === 'bg-emerald-500' ? 'from-emerald-50 via-green-50 to-teal-50 border-emerald-300' : rating?.color === 'bg-blue-500' ? 'from-blue-50 via-cyan-50 to-sky-50 border-blue-300' : rating?.color === 'bg-amber-500' ? 'from-amber-50 via-yellow-50 to-orange-50 border-amber-300' : 'from-orange-50 via-red-50 to-rose-50 border-orange-300'}`}>
             <CardHeader>
               <div className="flex items-start justify-between">
                 <div>
                   <CardTitle className="text-2xl">Predicted Solar Energy Potential</CardTitle>
                   <CardDescription className="text-sm">
-                    FI-AdaBoost model predicts Solar Irradiance (GHI) using rooftop geometry from OpenStreetMap. Solar Energy Potential is derived by multiplying GHI by your rooftop area.
+                    FI-AdaBoost first predicts solar irradiance, then the app multiplies it by the OpenStreetMap rooftop area to show theoretical solar energy potential.
                   </CardDescription>
                 </div>
-                <div className={`w-16 h-16 bg-gradient-to-br ${getSolarRating(prediction.solarPotential).bgGradient} rounded-full flex items-center justify-center shadow-lg`}>
+                <div className={`w-16 h-16 bg-gradient-to-br ${rating?.bgGradient} rounded-full flex items-center justify-center shadow-lg`}>
                   <Sun className="w-8 h-8 text-white" />
                 </div>
               </div>
@@ -484,52 +487,58 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             <CardContent>
               <div className="space-y-6">
                 <div>
-                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Solar Irradiance (GHI)</p>
+                  <p className="text-xs text-gray-500 uppercase tracking-wide mb-2">Theoretical Solar Energy Potential</p>
                   <div className="flex items-baseline gap-3 mb-3">
                     <span className="text-6xl sm:text-7xl bg-gradient-to-r from-gray-900 to-gray-700 bg-clip-text text-transparent">
                       {prediction.solarPotential.toFixed(2)}
                     </span>
-                    <span className="text-2xl text-gray-600">kWh/m²/day</span>
+                    <span className="text-2xl text-gray-600">kWh/day</span>
                   </div>
-                  <Badge className={`${getSolarRating(prediction.solarPotential).color} text-white shadow-md px-4 py-2 text-sm`}>
-                    {getSolarRating(prediction.solarPotential).label} Rating
+                  <Badge className={`${rating?.color} text-white shadow-md px-4 py-2 text-sm`}>
+                    {rating?.label} Rating
                   </Badge>
                 </div>
 
                 {/* Visual Indicator */}
                 <div className="space-y-3">
                   <div className="flex justify-between items-center text-sm">
-                    <span className="text-gray-700">Solar Irradiance Level</span>
-                    <span className="text-lg">{Math.round((prediction.solarPotential / 7) * 100)}%</span>
+                    <span className="text-gray-700">Irradiance Resource Level</span>
+                    <span className="text-lg">{Math.round((prediction.predictedIrradiance / 7) * 100)}%</span>
                   </div>
                   <div className="h-4 bg-gray-200/50 rounded-full overflow-hidden shadow-inner">
                     <div
-                      className={`h-full bg-gradient-to-r ${getSolarRating(prediction.solarPotential).bgGradient} transition-all duration-1000 shadow-lg`}
-                      style={{ width: `${Math.min((prediction.solarPotential / 7) * 100, 100)}%` }}
+                      className={`h-full bg-gradient-to-r ${rating?.bgGradient} transition-all duration-1000 shadow-lg`}
+                      style={{ width: `${Math.min((prediction.predictedIrradiance / 7) * 100, 100)}%` }}
                     />
                   </div>
                 </div>
 
                 <div className="bg-white/70 backdrop-blur rounded-xl p-4 shadow-md border border-white/50">
                   <p className="text-sm text-gray-800 leading-relaxed">
-                    <strong className="text-gray-900">What this means:</strong> {getSolarRating(prediction.solarPotential).description}
+                    <strong className="text-gray-900">What this means:</strong> {rating?.description}
                   </p>
                 </div>
 
-                {dailyEnergyPotential !== null && (
+                {annualEnergyPotential !== null && (
                   <div className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
-                    <p className="text-xs text-slate-500 uppercase tracking-wide">Solar Energy Potential (Theoretical)</p>
+                    <p className="text-xs text-slate-500 uppercase tracking-wide">Calculation Used</p>
                     <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
                       <p className="text-sm text-slate-700">
-                        Daily: <span className="font-semibold">{dailyEnergyPotential.toLocaleString(undefined, { maximumFractionDigits: 1 })} kWh/day</span>
+                        Predicted irradiance: <span className="font-semibold">{prediction.predictedIrradiance.toFixed(2)} kWh/m2/day</span>
                       </p>
                       <p className="text-sm text-slate-700">
-                        Annual: <span className="font-semibold">{(dailyEnergyPotential * 365).toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
+                        Annual potential: <span className="font-semibold">{annualEnergyPotential.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
                       </p>
                     </div>
                     <p className="text-xs text-slate-400 mt-3 leading-relaxed">
-                      This is sunlight hitting the roof, before any conversion to electricity. Electrical output depends on specific solar panels and installation.
+                      Solar Energy Potential = predicted irradiance x rooftop area. This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
                     </p>
+                    <div className="mt-4 rounded-lg border border-amber-200 bg-amber-50 p-3">
+                      <p className="text-xs font-semibold uppercase tracking-wide text-amber-900">Scope and Assumptions</p>
+                      <p className="mt-2 text-xs leading-relaxed text-amber-900">
+                        This result assumes the whole mapped rooftop area is available for solar collection. It represents incident sunlight on the roof, not usable PV electricity, and excludes specific panel layout, sensor data, panel efficiency, inverter losses, and performance ratio.
+                      </p>
+                    </div>
                   </div>
                 )}
               </div>
@@ -662,3 +671,4 @@ function InfoItem({ label, value, icon, description, gradient }: InfoItemProps) 
     </div>
   );
 }
+
