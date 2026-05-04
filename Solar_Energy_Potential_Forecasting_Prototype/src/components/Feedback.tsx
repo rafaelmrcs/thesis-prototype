@@ -5,7 +5,7 @@ import { Input } from './ui/input';
 import { Label } from './ui/label';
 import { MessageSquare, Send, CheckCircle2 } from 'lucide-react';
 
-const FEEDBACK_URL = import.meta.env.VITE_FEEDBACK_URL as string | undefined;
+const FEEDBACK_URL = 'https://script.google.com/macros/s/AKfycbzei4tLFcm8Elzow4rlWNSgJx3UIeyST9lizZWQJM99F6FGlOrXGijN6Iy-Rb2DBTBTdg/exec';
 
 
 export function Feedback() {
@@ -23,11 +23,6 @@ export function Feedback() {
       setError('Please enter your comments or recommendations before submitting.');
       return;
     }
-    if (!FEEDBACK_URL) {
-      setError('Feedback endpoint is not configured. Set VITE_FEEDBACK_URL in your environment.');
-      return;
-    }
-
     setSubmitting(true);
     setError(null);
     try {
