@@ -3,8 +3,9 @@ import { ForecastingTool } from './components/ForecastingTool';
 import { ModelAnalytics } from './components/ModelAnalytics';
 import { GlobalModelAnalytics } from './components/GlobalModelAnalytics';
 import { Help } from './components/Help';
+import { Feedback } from './components/Feedback';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Sun, BarChart3, FlaskConical, HelpCircle } from 'lucide-react';
+import { Sun, BarChart3, FlaskConical, HelpCircle, MessageSquare } from 'lucide-react';
 
 export default function App() {
   const [selectedCoordinates, setSelectedCoordinates] = useState({ lat: 7.0731, lng: 125.6128 });
@@ -40,7 +41,7 @@ export default function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
         <Tabs defaultValue="forecasting" className="w-full">
-          <TabsList className="grid w-full max-w-3xl mx-auto grid-cols-4 mb-8 h-12 p-1 bg-white shadow-md border border-gray-200">
+          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-5 mb-8 h-12 p-1 bg-white shadow-md border border-gray-200">
             <TabsTrigger 
               value="forecasting" 
               className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
@@ -73,6 +74,14 @@ export default function App() {
               <span className="hidden sm:inline">Help</span>
               <span className="sm:hidden">Help</span>
             </TabsTrigger>
+            <TabsTrigger
+              value="feedback"
+              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Feedback</span>
+              <span className="sm:hidden">Feedback</span>
+            </TabsTrigger>
           </TabsList>
           
           <TabsContent value="forecasting" className="mt-0">
@@ -91,6 +100,10 @@ export default function App() {
 
           <TabsContent value="help" className="mt-0">
             <Help />
+          </TabsContent>
+
+          <TabsContent value="feedback" className="mt-0">
+            <Feedback />
           </TabsContent>
         </Tabs>
       </main>
