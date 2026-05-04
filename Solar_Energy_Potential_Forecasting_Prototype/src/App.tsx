@@ -3,8 +3,9 @@ import { ForecastingTool } from './components/ForecastingTool';
 import { ModelAnalytics } from './components/ModelAnalytics';
 import { GlobalModelAnalytics } from './components/GlobalModelAnalytics';
 import { Help } from './components/Help';
+import { Feedback } from './components/Feedback';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Sun, BarChart3, FlaskConical, HelpCircle } from 'lucide-react';
+import { Sun, BarChart3, FlaskConical, HelpCircle, MessageSquare } from 'lucide-react';
 
 export default function App() {
   const [selectedCoordinates, setSelectedCoordinates] = useState({ lat: 7.0731, lng: 125.6128 });
@@ -40,17 +41,17 @@ export default function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
         <Tabs defaultValue="forecasting" className="w-full">
-          <TabsList className="grid w-full max-w-3xl mx-auto grid-cols-4 mb-8 h-12 p-1 bg-white shadow-md border border-gray-200">
-            <TabsTrigger 
-              value="forecasting" 
+          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-5 mb-8 h-12 p-1 bg-white shadow-md border border-gray-200">
+            <TabsTrigger
+              value="forecasting"
               className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
             >
               <Sun className="w-4 h-4" />
               <span className="hidden sm:inline">Forecasting Tool</span>
               <span className="sm:hidden">Forecast</span>
             </TabsTrigger>
-            <TabsTrigger 
-              value="analytics" 
+            <TabsTrigger
+              value="analytics"
               className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-cyan-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
             >
               <BarChart3 className="w-4 h-4" />
@@ -73,14 +74,20 @@ export default function App() {
               <span className="hidden sm:inline">Help</span>
               <span className="sm:hidden">Help</span>
             </TabsTrigger>
+            <TabsTrigger
+              value="feedback"
+              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+            >
+              <MessageSquare className="w-4 h-4" />
+              <span className="hidden sm:inline">Feedback</span>
+              <span className="sm:hidden">Feedback</span>
+            </TabsTrigger>
           </TabsList>
-          
+
           <TabsContent value="forecasting" className="mt-0">
-            <ForecastingTool
-              onCoordinatesChange={handleCoordinatesChange}
-            />
+            <ForecastingTool onCoordinatesChange={handleCoordinatesChange} />
           </TabsContent>
-          
+
           <TabsContent value="analytics" className="mt-0">
             <ModelAnalytics lat={selectedCoordinates.lat} lng={selectedCoordinates.lng} />
           </TabsContent>
@@ -92,17 +99,12 @@ export default function App() {
           <TabsContent value="help" className="mt-0">
             <Help />
           </TabsContent>
+
+          <TabsContent value="feedback" className="mt-0">
+            <Feedback />
+          </TabsContent>
         </Tabs>
       </main>
-
-      {/* Footer */}
-      {/* <footer className="bg-white/80 backdrop-blur-md border-t border-gray-200 mt-16">
-        <div className="max-w-7xl mx-auto px-4 py-8 text-center">
-          <p className="text-sm text-gray-700">Solar Energy Potential Forecasting - Davao City</p>
-          <p className="text-xs text-gray-500 mt-1">Thesis Project • Feature-Importance-Aware AdaBoost Research</p>
-          <p className="text-xs text-gray-400 mt-2">© 2024 CCS Research • Demonstrating 18.5% RMSE Improvement</p>
-        </div>
-      </footer> */}
     </div>
   );
 }
