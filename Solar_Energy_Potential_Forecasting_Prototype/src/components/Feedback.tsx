@@ -7,15 +7,6 @@ import { MessageSquare, Send, CheckCircle2 } from 'lucide-react';
 
 const FEEDBACK_URL = import.meta.env.VITE_FEEDBACK_URL as string | undefined;
 
-const ROLES = [
-  'Student',
-  'Researcher / Academic',
-  'Engineer / Technician',
-  'Government / Policy Maker',
-  'Industry Professional',
-  'Other',
-];
-
 export function Feedback() {
   const [form, setForm] = useState({ name: '', email: '', role: '', comments: '' });
   const [submitting, setSubmitting] = useState(false);
@@ -127,17 +118,12 @@ export function Feedback() {
               {/* Professional Role */}
               <div className="space-y-1.5">
                 <Label htmlFor="role" className="text-sm">Professional Role</Label>
-                <select
+                <Input
                   id="role"
+                  placeholder="e.g., Engineer, Researcher, Student…"
                   value={form.role}
                   onChange={set('role')}
-                  className="w-full rounded-md border border-input bg-background px-3 py-2 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
-                >
-                  <option value="">Select your role…</option>
-                  {ROLES.map((r) => (
-                    <option key={r} value={r}>{r}</option>
-                  ))}
-                </select>
+                />
               </div>
 
               {/* Comments */}
