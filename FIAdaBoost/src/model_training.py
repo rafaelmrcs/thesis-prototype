@@ -93,7 +93,7 @@ SHARED_FEATURES   = [
     "lat", "lon", "azimuth", "orientation_score",
     "shading_factor", "SEI_norm", "clear_sky_ratio", "sunshine_hours",
 ]
-BASELINE_FEATURES = ["lat", "lon", "clear_sky_ratio"]
+BASELINE_FEATURES = ["lat", "lon"]
 FI_FEATURES       = SHARED_FEATURES
 TARGET_COL        = "Target_eff_J"
 

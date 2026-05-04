@@ -584,12 +584,12 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             </CardContent>
           </Card>
 
-          {/* Weather Conditions Summary */}
+          {/* Regional Weather Context */}
           <Card className="border-2 border-cyan-100 shadow-lg">
             <CardHeader className="bg-gradient-to-r from-cyan-50 to-blue-50">
               <CardTitle className="flex items-center gap-2">
                 <Cloud className="w-5 h-5 text-cyan-600" />
-                Weather Conditions Summary
+                Regional Weather Context
               </CardTitle>
             </CardHeader>
             <CardContent className="pt-6">
@@ -624,23 +624,6 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 />
               </div>
 
-           
-              <div className="mt-6 p-4 bg-gradient-to-r from-sky-50 to-blue-50 rounded-xl border-2 border-sky-200 shadow-md">
-                <div className="flex justify-between items-center mb-3">
-                  <span className="text-sm">Clear Sky Ratio</span>
-                  <span className="text-xl">{(prediction.clearSkyRatio * 100).toFixed(1)}%</span>
-                </div>
-                <div className="h-3 bg-sky-200/50 rounded-full overflow-hidden shadow-inner">
-                  <div
-                    className="h-full bg-gradient-to-r from-sky-500 to-blue-600 transition-all duration-1000 shadow-lg"
-                    style={{ width: `${prediction.clearSkyRatio * 100}%` }}
-                  />
-                </div>
-                <p className="text-xs text-gray-600 mt-3 leading-relaxed">
-                  <strong>Key Feature:</strong> Ratio of actual to theoretical clear-sky solar radiation. 
-                  This is the most important predictor in the FI-AdaBoost model.
-                </p>
-              </div>
             </CardContent>
           </Card>
         </div>
