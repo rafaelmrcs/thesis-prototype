@@ -90,7 +90,7 @@ export function Help() {
                 <p className="font-semibold text-orange-900">Experiment 2 — Full System Comparison</p>
               </div>
               <p className="text-xs text-orange-800">
-                Baseline uses only <strong>3 features</strong> (lat, lon, clear_sky_ratio). FI-AdaBoost uses all <strong>8 features</strong>. This shows the practical advantage of the full proposed system.
+                Baseline uses only <strong>2 features</strong> (lat, lon). FI-AdaBoost uses all <strong>8 features</strong>. This shows the practical advantage of the full proposed system.
               </p>
               <div className="text-xs text-orange-700 space-y-0.5">
                 <p>Baseline RMSE: <strong>28,144.27 J/m²/day</strong></p>
@@ -124,11 +124,6 @@ export function Help() {
               source: 'OpenStreetMap / Overpass API',
               what: 'Building footprint polygons for Davao City — used to compute azimuth, rooftop area, orientation score, shading factor, and Solar Exposure Index (SEI)',
               color: 'emerald',
-            },
-            {
-              source: 'pvlib',
-              what: 'Clear-sky irradiance reference (Ineichen model) — used to derive clear_sky_ratio per location and to compute the POA-adjusted effective irradiance target',
-              color: 'violet',
             },
           ].map(({ source, what, color }) => (
             <div key={source} className={`rounded-xl border border-${color}-200 bg-${color}-50 p-4`}>
@@ -190,14 +185,6 @@ export function Help() {
       {/* Footer */}
       <div className="rounded-xl border border-slate-200 bg-slate-50 px-4 py-3 text-xs text-slate-500 flex flex-col sm:flex-row items-center justify-between gap-2">
         <span>Mercado · Retardo · Verzosa &nbsp;·&nbsp; University of Mindanao, College of Computing Studies &nbsp;·&nbsp; Academic Year 2026</span>
-        <a
-          href="https://docs.google.com/document/d/1kT4cxMAZtIft6CnI9nSj_5iqu9JqlYAiWigeJ2GAHcI/edit?tab=t.0"
-          target="_blank"
-          rel="noopener noreferrer"
-          className="shrink-0 text-orange-600 hover:text-orange-800 hover:underline font-medium"
-        >
-          Review Study →
-        </a>
       </div>
     </div>
   );

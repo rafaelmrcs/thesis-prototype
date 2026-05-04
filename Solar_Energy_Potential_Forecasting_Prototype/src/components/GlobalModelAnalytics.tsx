@@ -427,7 +427,7 @@ export function GlobalModelAnalytics() {
         <CardHeader>
           <CardTitle className="text-2xl">Visual Analysis</CardTitle>
           <CardDescription>
-            Predicted vs Actual scatter, error distribution histogram, and cross-validation fold chart.
+            Predicted vs Actual scatter and error distribution histogram.
           </CardDescription>
         </CardHeader>
         <CardContent className="space-y-10">
@@ -497,91 +497,6 @@ export function GlobalModelAnalytics() {
             )}
           </section>
 
-          {/* C. Cross-validation */}
-          <section>
-            <h3 className="mb-1 text-lg font-semibold">C. Cross-validation Fold Chart</h3>
-            <p className="mb-4 text-sm text-slate-500">
-              RMSE per saved fold when available. If no CV artifact exists, this section falls back to the saved test summary from the latest results export.
-            </p>
-            {cvChartData.length > 0 ? (
-              <ResponsiveContainer width="100%" height={320}>
-                <LineChart data={cvChartData}>
-                    <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                    <XAxis dataKey="fold" stroke="#64748b" />
-                    <YAxis stroke="#64748b" />
-                  <Tooltip formatter={(v: number | string) => formatExact(Number(v), 6)} />
-                  <Legend />
-                  <Line
-                    type="monotone"
-                    dataKey="baselineRmse"
-                    name="Baseline RMSE"
-                    stroke="#94a3b8"
-                    strokeWidth={3}
-                    dot={{ r: 5 }}
-                    activeDot={{ r: 7 }}
-                  />
-                  <Line
-                    type="monotone"
-                    dataKey="fiRmse"
-                    name="FI-AdaBoost RMSE"
-                    stroke="#f97316"
-                    strokeWidth={3}
-                    dot={{ r: 5 }}
-                    activeDot={{ r: 7 }}
-                  />
-                </LineChart>
-              </ResponsiveContainer>
-            ) : (
-              <EmptyState
-                message={loading ? 'Loading cross-validation chart…' : error ?? 'CV metrics unavailable.'}
-              />
-            )}
-
-            {/* CV summary table */}
-            {cvMetrics && (
-              <div className="mt-6 overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-                <table className="w-full text-sm">
-                  <thead className="bg-slate-100 text-slate-700">
-                    <tr>
-                      <th className="px-4 py-3 text-left font-semibold">Fold</th>
-                      <th className="px-4 py-3 text-right font-semibold">Baseline RMSE</th>
-                      <th className="px-4 py-3 text-right font-semibold">FI RMSE</th>
-                      <th className="px-4 py-3 text-right font-semibold">Baseline MAE</th>
-                      <th className="px-4 py-3 text-right font-semibold">FI MAE</th>
-                      <th className="px-4 py-3 text-right font-semibold">Baseline R²</th>
-                      <th className="px-4 py-3 text-right font-semibold">FI R²</th>
-                      <th className="px-4 py-3 text-right font-semibold">R² Gain</th>
-                    </tr>
-                  </thead>
-                  <tbody>
-                    {cvMetrics.cv_fold_metrics.map((m) => (
-                      <tr key={m.fold} className="border-t border-slate-200 hover:bg-slate-50">
-                        <td className="px-4 py-3 font-medium">Fold {m.fold}</td>
-                        <td className="px-4 py-3 text-right">{formatExact(m.baseline_rmse, 6)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(m.fi_rmse, 6)}</td>
-                        <td className="px-4 py-3 text-right">{formatExact(m.baseline_mae, 6)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(m.fi_mae, 6)}</td>
-                        <td className="px-4 py-3 text-right">{formatRawR2(m.baseline_r2)}</td>
-                        <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatRawR2(m.fi_r2)}</td>
-                        <td className="px-4 py-3 text-right text-emerald-600">+{formatPercent((m.fi_r2 - m.baseline_r2) * 100, 6)}</td>
-                      </tr>
-                    ))}
-                    {/* Average row */}
-                    <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
-                      <td className="px-4 py-3">Average</td>
-                      <td className="px-4 py-3 text-right">{formatExact(cvMetrics.average_metrics.baseline.rmse, 6)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{formatExact(cvMetrics.average_metrics.fiAdaBoost.rmse, 6)}</td>
-                      <td className="px-4 py-3 text-right">{formatExact(cvMetrics.average_metrics.baseline.mae, 6)}</td>
-                      <td className="px-4 py-3 text-right text-orange-600">{formatExact(cvMetrics.average_metrics.fiAdaBoost.mae, 6)}</td>
-                      <td className="px-4 py-3 text-right">{formatRawR2(cvMetrics.average_metrics.baseline.r2)}</td>
-                      <td className="px-4 py-3 text-right text-emerald-600">{formatRawR2(cvMetrics.average_metrics.fiAdaBoost.r2)}</td>
-                      <td className="px-4 py-3 text-right text-emerald-600">+{formatPercent((cvMetrics.average_metrics.fiAdaBoost.r2 - cvMetrics.average_metrics.baseline.r2) * 100, 6)}</td>
-                    </tr>
-                  </tbody>
-                </table>
-              </div>
-            )}
-          </section>
         </CardContent>
       </Card>
 
@@ -730,34 +645,6 @@ export function GlobalModelAnalytics() {
           )}
         </CardContent>
       </Card>
-
-      {/* ── SECTION 8: Dataset & Split Info ─────────────────────────────────── */}
-      {splitInfo && (
-        <Card className="border-2 border-slate-200 bg-white shadow-xl">
-          <CardHeader>
-            <CardTitle className="text-2xl">Dataset &amp; Split Info</CardTitle>
-            <CardDescription>Configuration used for the saved training run.</CardDescription>
-          </CardHeader>
-          <CardContent>
-            <div className="grid grid-cols-2 gap-4 sm:grid-cols-3 lg:grid-cols-4">
-              {[
-                { label: 'Total Samples', value: splitInfo.total_samples.toLocaleString() },
-                { label: 'Train Samples', value: splitInfo.train_samples.toLocaleString() },
-                { label: 'Test Samples', value: splitInfo.test_samples.toLocaleString() },
-                { label: 'Test Fraction', value: `${(splitInfo.test_fraction * 100).toFixed(0)}%` },
-                { label: 'Split Method', value: splitInfo.split_method },
-                { label: 'Random Seed', value: String(splitInfo.random_seed) },
-                { label: 'Target Column', value: splitInfo.target_col },
-              ].map(({ label, value }) => (
-                <div key={label} className="rounded-xl border border-slate-200 bg-slate-50 p-4 shadow-sm">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide">{label}</p>
-                  <p className="mt-1 font-semibold text-slate-900 break-all">{value}</p>
-                </div>
-              ))}
-            </div>
-          </CardContent>
-        </Card>
-      )}
 
       {/* ── SECTION 9: Research Plots ────────────────────────────────────────── */}
       <Card className="border-2 border-rose-200 bg-gradient-to-br from-rose-50 via-pink-50 to-fuchsia-50 shadow-xl">
