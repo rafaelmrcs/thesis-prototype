@@ -10,7 +10,7 @@ METHODOLOGY (Two-Phase Pipeline)
   PHASE 1: MACHINE LEARNING (fair comparison)
   - Both models predict the SAME target: effective GHI (J/m²/day),
     pvlib POA-adjusted per building (Fix 1 — aligned targets).
-  - Baseline AdaBoost uses 3 features: lat, lon, clear_sky_ratio.
+  - Baseline AdaBoost uses 2 features: lat, lon.
     FI-AdaBoost uses all 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
@@ -29,7 +29,7 @@ METHODOLOGY (Two-Phase Pipeline)
 
 
   PHASE 2: ENERGY FORECASTING
-  - Applies trained spatial model to 3,000 buildings for annual kWh.
+  - Applies trained spatial model to 10,000 buildings for annual kWh.
 ────────────────────────────────────────────────────────────────────────────
 """
 
@@ -85,7 +85,7 @@ np.random.seed(RANDOM_SEED)
 
 # ── Feature sets ──────────────────────────────────────────────────────────────
 # Both models predict Target_eff_J (pvlib POA-adjusted effective GHI).
-# Baseline AdaBoost uses 3 features (lat, lon, clear_sky_ratio).
+# Baseline AdaBoost uses 2 features (lat, lon).
 # FI-AdaBoost uses all 8 features. The only algorithmic difference is the boosting update.
 # Log transforms removed (Fix 6): raw shading_factor and SEI_norm are used.
 # clear_sky_ratio and sunshine_hours added from §2.2.2 (Fix 3).
@@ -168,7 +168,7 @@ def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
 
 
 # =============================================================================
-# DATA LOADING — SPATIAL DATASET (3,000 points)
+# DATA LOADING — SPATIAL DATASET (10,000 points)
 # =============================================================================
 def load_dataset() -> pd.DataFrame:
     """
