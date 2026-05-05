@@ -9,6 +9,8 @@ import {
   Layers,
   BookOpen,
   GitBranch,
+  Zap,
+  Target,
 } from 'lucide-react';
 
 export function Help() {
@@ -102,6 +104,75 @@ export function Help() {
           <p className="text-xs text-gray-500">
             Both experiments share the same daily temporal evaluation (365-day NASA POWER centroid data) — no statistically significant difference was found on the daily dataset (DM = −1.54, p = 0.124).
           </p>
+        </CardContent>
+      </Card>
+
+      {/* Prediction Pipeline */}
+      <Card className="border-2 border-green-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <Zap className="w-5 h-5 text-green-600" />
+            How the Prediction Works
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm text-gray-700 leading-relaxed">
+          <ol className="space-y-2 list-decimal list-inside">
+            <li><strong>Pin location</strong> → Overpass API fetches the nearest OSM building polygon</li>
+            <li><strong>Building features:</strong> azimuth (longest-edge bearing), rooftop area (m²), orientation_score (south-facing penalty), shading_factor (area-ratio obstruction proxy), SEI_norm (Solar Exposure Index ÷ training max)</li>
+            <li><strong>NASA POWER</strong> rolling window: GHI, clearness index (KT), air temp (T2M), rel. humidity (RH2M)</li>
+            <li><strong>pvlib Ineichen</strong> clear-sky model → ghi_clear_annual + sunshine_hours → <code className="text-xs bg-slate-100 px-1 rounded">clear_sky_ratio = GHI ÷ ghi_clear</code></li>
+            <li>8-feature vector: <code className="text-xs bg-slate-100 px-1 rounded">[lat, lon, azimuth, orientation_score, shading_factor, SEI_norm, clear_sky_ratio, sunshine_hours]</code></li>
+            <li><strong>FI-AdaBoost</strong> predicts GHI (kWh/m²/day) → Solar Energy Potential computed from rooftop area</li>
+          </ol>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 space-y-1">
+            <p>SEP (kWh/day)  = GHI (kWh/m²/day) × Rooftop Area (m²)</p>
+            <p>SEP (kWh/year) = Daily SEP × 365</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reading the Results */}
+      <Card className="border-2 border-orange-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <Target className="w-5 h-5 text-orange-600" />
+            Reading the Results
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-6 text-sm text-gray-700">
+          <div className="space-y-3">
+            <p className="font-semibold text-gray-800">Irradiance Resource Level</p>
+            <p className="text-xs text-gray-600">Percentage of the 7 kWh/m²/day practical maximum:</p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-2 font-mono text-xs text-slate-700 text-center">
+              (GHI ÷ 7) × 100 %
+            </div>
+            <div className="overflow-hidden rounded-lg border border-slate-200 text-xs">
+              <table className="w-full">
+                <thead className="bg-slate-100 text-slate-700">
+                  <tr>
+                    <th className="px-3 py-2 text-left font-semibold">Rating</th>
+                    <th className="px-3 py-2 text-left font-semibold">Threshold</th>
+                  </tr>
+                </thead>
+                <tbody>
+                  <tr className="border-t border-slate-100"><td className="px-3 py-1.5 font-medium text-emerald-700">Excellent</td><td className="px-3 py-1.5 text-slate-600">≥ 5.5 kWh/m²/day</td></tr>
+                  <tr className="border-t border-slate-100"><td className="px-3 py-1.5 font-medium text-blue-700">Very Good</td><td className="px-3 py-1.5 text-slate-600">≥ 4.5 kWh/m²/day</td></tr>
+                  <tr className="border-t border-slate-100"><td className="px-3 py-1.5 font-medium text-amber-700">Good</td><td className="px-3 py-1.5 text-slate-600">≥ 3.5 kWh/m²/day</td></tr>
+                  <tr className="border-t border-slate-100"><td className="px-3 py-1.5 font-medium text-red-700">Fair</td><td className="px-3 py-1.5 text-slate-600">&lt; 3.5 kWh/m²/day</td></tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+          <div className="space-y-3">
+            <p className="font-semibold text-gray-800">Prediction Confidence (35–99%)</p>
+            <p className="text-xs text-gray-600">Blended from two signals — both clipped to [35, 99]:</p>
+            <ul className="space-y-2 text-xs text-gray-600 list-disc list-inside">
+              <li><strong>Coverage:</strong> distance from pin to nearest training point (kd-tree) → <code className="bg-slate-100 px-1 rounded">100 − dist_km × 2.5</code></li>
+              <li><strong>Agreement:</strong> model disagreement penalty → <code className="bg-slate-100 px-1 rounded">100 − |Baseline − FI| × 20</code></li>
+              <li><strong>Final:</strong> <code className="bg-slate-100 px-1 rounded">0.7 × coverage + 0.3 × agreement</code></li>
+            </ul>
+            <p className="text-xs text-gray-500 italic">Confidence drops when the pin is far from any training point or when the two models strongly disagree.</p>
+          </div>
         </CardContent>
       </Card>
 
