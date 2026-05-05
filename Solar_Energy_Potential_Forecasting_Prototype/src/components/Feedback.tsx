@@ -61,6 +61,7 @@ export function Feedback() {
   const [signaturePreview, setSignaturePreview] = useState<string | null>(null);
   const [signatureBase64, setSignatureBase64] = useState<string | null>(null);
   const [waiverAgreed, setWaiverAgreed] = useState(false);
+  const [nameConsent, setNameConsent] = useState(false);
   const [submitting, setSubmitting] = useState(false);
   const [submitted, setSubmitted] = useState(false);
   const [error, setError] = useState<string | null>(null);
@@ -119,6 +120,7 @@ export function Feedback() {
           totalScore: totalScore.toFixed(2),
           signatureImage: signatureBase64 ?? '—',
           waiverAgreed: true,
+          nameConsent: nameConsent,
         }),
       });
       setSubmitted(true);
@@ -149,6 +151,7 @@ export function Feedback() {
                 setSignaturePreview(null);
                 setSignatureBase64(null);
                 setWaiverAgreed(false);
+                setNameConsent(false);
               }}
             >
               Submit another response
@@ -175,6 +178,24 @@ export function Feedback() {
           </div>
         </div>
       </div>
+
+      {/* Acceptance & Presentation Photos */}
+      <Card className="border-2 border-slate-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="text-lg">Prototype Review Documentation</CardTitle>
+          <p className="text-xs text-slate-500 mt-0.5">Photos from the acceptance testing and prototype presentation activities.</p>
+        </CardHeader>
+        <CardContent className="grid grid-cols-1 sm:grid-cols-2 gap-4">
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-slate-600">Acceptance Testing</p>
+            <img src="/Acceptance.jpg" alt="Acceptance testing" className="w-full rounded-xl border border-slate-200 shadow-sm object-cover" />
+          </div>
+          <div className="space-y-1.5">
+            <p className="text-xs font-medium text-slate-600">Prototype Presentation</p>
+            <img src="/Presentation.jpg" alt="Prototype presentation" className="w-full rounded-xl border border-slate-200 shadow-sm object-cover" />
+          </div>
+        </CardContent>
+      </Card>
 
       {/* PDF Viewer */}
       <Card className="border-2 border-amber-200 shadow-md">
@@ -358,6 +379,15 @@ export function Feedback() {
               className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-violet-600 cursor-pointer"
             />
             <span className="text-slate-700 font-medium">I have read and agree to the confidentiality and data privacy notice above.</span>
+          </label>
+          <label className="flex items-start gap-3 mt-1 cursor-pointer">
+            <input
+              type="checkbox"
+              checked={nameConsent}
+              onChange={(e) => setNameConsent(e.target.checked)}
+              className="mt-0.5 h-4 w-4 rounded border-slate-300 accent-violet-600 cursor-pointer"
+            />
+            <span className="text-slate-700 font-medium">I give permission for my name to be listed as an acknowledgment (gift) in the thesis research report.</span>
           </label>
         </div>
 

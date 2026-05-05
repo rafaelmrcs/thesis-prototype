@@ -93,15 +93,127 @@ export function Help() {
                 Baseline uses only <strong>2 features</strong> (lat, lon). FI-AdaBoost uses all <strong>8 features</strong>. This shows the practical advantage of the full proposed system.
               </p>
               <div className="text-xs text-orange-700 space-y-0.5">
-                <p>Baseline RMSE: <strong>28,144.27 J/m²/day</strong></p>
+                <p>Baseline RMSE: <strong>28,360.93 J/m²/day</strong></p>
                 <p>FI-AdaBoost RMSE: <strong>6,682.48 J/m²/day</strong></p>
-                <p>Improvement: <strong>76.3%</strong> &nbsp;·&nbsp; DM = 10.048 (p &lt; 0.001)</p>
+                <p>Improvement: <strong>76.4%</strong> &nbsp;·&nbsp; DM = 10.099 (p &lt; 0.001)</p>
               </div>
             </div>
           </div>
           <p className="text-xs text-gray-500">
-            Both experiments share the same daily temporal evaluation (365-day NASA POWER centroid data) — no statistically significant difference was found on the daily dataset (DM = −1.54, p = 0.124).
+            Both experiments share the same daily temporal evaluation (365-day NASA POWER centroid data) — no statistically significant difference was found on the daily dataset (DM = −1.54, p = 0.108).
           </p>
+        </CardContent>
+      </Card>
+
+      {/* How the prediction works */}
+      <Card className="border-2 border-violet-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <FlaskConical className="w-5 h-5 text-violet-600" />
+            How the Prediction Works
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm text-gray-700 leading-relaxed">
+          <ol className="list-decimal list-inside space-y-2 text-sm text-gray-700">
+            <li>Pin location → Overpass API fetches the nearest OSM building polygon</li>
+            <li>
+              Building features:{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">azimuth</span> (longest-edge bearing),{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">rooftop area (m²)</span>,{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">orientation_score</span> (south-facing penalty),{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">shading_factor</span> (area-ratio obstruction proxy),{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">SEI_norm</span> (Solar Exposure Index ÷ training max)
+            </li>
+            <li>
+              NASA POWER rolling window: GHI, clearness index (<span className="font-mono text-xs bg-slate-100 px-1 rounded">KT</span>), air temp (<span className="font-mono text-xs bg-slate-100 px-1 rounded">T2M</span>), rel. humidity (<span className="font-mono text-xs bg-slate-100 px-1 rounded">RH2M</span>)
+            </li>
+            <li>
+              pvlib Ineichen clear-sky model →{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">ghi_clear_annual</span> +{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">sunshine_hours</span> →{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">clear_sky_ratio = GHI ÷ ghi_clear</span>
+            </li>
+            <li>
+              8-feature vector:{' '}
+              <span className="font-mono text-xs bg-slate-100 px-1 rounded">[lat, lon, azimuth, orientation_score, shading_factor, SEI_norm, clear_sky_ratio, sunshine_hours]</span>
+            </li>
+            <li>FI-AdaBoost predicts GHI (kWh/m²/day) → Solar Energy Potential computed from rooftop area</li>
+          </ol>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 space-y-1">
+            <p>SEP (kWh/day)  = GHI (kWh/m²/day) × Rooftop Area (m²)</p>
+            <p>SEP (kWh/year) = Daily SEP × 365</p>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Reading the results */}
+      <Card className="border-2 border-emerald-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <BarChart3 className="w-5 h-5 text-emerald-600" />
+            Reading the Results
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-6 text-sm text-gray-700 leading-relaxed">
+          {/* Irradiance Resource Level */}
+          <div className="space-y-3">
+            <p className="font-semibold text-gray-800">Irradiance Resource Level</p>
+            <p className="text-xs text-gray-600">Percentage of the 7 kWh/m²/day practical maximum:</p>
+            <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700">
+              (GHI ÷ 7) × 100 %
+            </div>
+            <div className="rounded-xl border border-slate-200 overflow-hidden text-xs">
+              <table className="w-full">
+                <thead className="bg-slate-100">
+                  <tr>
+                    <th className="text-left px-4 py-2 font-semibold text-slate-700">Rating</th>
+                    <th className="text-left px-4 py-2 font-semibold text-slate-700">Threshold</th>
+                  </tr>
+                </thead>
+                <tbody className="divide-y divide-slate-100">
+                  <tr className="bg-white">
+                    <td className="px-4 py-2 text-emerald-700 font-medium">Excellent</td>
+                    <td className="px-4 py-2 text-slate-600">≥ 5.5 kWh/m²/day</td>
+                  </tr>
+                  <tr className="bg-slate-50">
+                    <td className="px-4 py-2 text-blue-700 font-medium">Very Good</td>
+                    <td className="px-4 py-2 text-slate-600">≥ 4.5 kWh/m²/day</td>
+                  </tr>
+                  <tr className="bg-white">
+                    <td className="px-4 py-2 text-amber-700 font-medium">Good</td>
+                    <td className="px-4 py-2 text-slate-600">≥ 3.5 kWh/m²/day</td>
+                  </tr>
+                  <tr className="bg-slate-50">
+                    <td className="px-4 py-2 text-orange-700 font-medium">Fair</td>
+                    <td className="px-4 py-2 text-slate-600">&lt; 3.5 kWh/m²/day</td>
+                  </tr>
+                </tbody>
+              </table>
+            </div>
+          </div>
+
+          {/* Prediction Confidence */}
+          <div className="space-y-3">
+            <p className="font-semibold text-gray-800">Prediction Confidence (35–99%)</p>
+            <p className="text-xs text-gray-600">Blended from two signals — both clipped to [35, 99]:</p>
+            <ul className="space-y-1 text-xs text-gray-700 list-disc list-inside">
+              <li>
+                <strong>Coverage:</strong> distance from pin to nearest training point (kd-tree) →{' '}
+                <span className="font-mono bg-slate-100 px-1 rounded">100 − dist_km × 2.5</span>
+              </li>
+              <li>
+                <strong>Agreement:</strong> model disagreement penalty →{' '}
+                <span className="font-mono bg-slate-100 px-1 rounded">100 − |Baseline − FI| × 20</span>
+              </li>
+              <li>
+                <strong>Final:</strong>{' '}
+                <span className="font-mono bg-slate-100 px-1 rounded">0.7 × coverage + 0.3 × agreement</span>
+              </li>
+            </ul>
+            <p className="text-xs text-gray-500 italic">
+              Confidence drops when the pin is far from any training point or when the two models strongly disagree.
+            </p>
+          </div>
         </CardContent>
       </Card>
 
@@ -189,4 +301,3 @@ export function Help() {
     </div>
   );
 }
-
