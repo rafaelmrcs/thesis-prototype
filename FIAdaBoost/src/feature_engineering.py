@@ -5,10 +5,10 @@ Implements §2.2 Feature Engineering from the thesis methodology.
 
 WHAT THIS FILE DOES IN THE NEW DESIGN
 ──────────────────────────────────────
-The primary dataset is 3,000 spatial coordinates (lat, lon, GHI_mean).
+The primary dataset is 10,000 spatial coordinates (lat, lon, GHI_mean).
 This file's job is to compute per-building topographical features from the
 OSM building polygons so that data_integration.py can attach the nearest
-building's features to each of the 3,000 spatial points.
+building's features to each of the 10,000 spatial points.
 
 ACTIVE FUNCTIONS (called by __main__ and data_integration.py):
   topo_features()     — computes orientation, shading, tilt, SEI per building
@@ -18,7 +18,7 @@ INACTIVE FUNCTIONS (kept for reference / optional daily-series analysis):
   temporal_features()          — adds month_sin, month_cos, season to a daily df
   drop_leakage_cols()          — removes GHI-derived features from a daily df
   aggregate_building_features()— reduces buildings to city-level means
-  These are NOT used in the spatial 3,000-point pipeline.
+  These are NOT used in the spatial 10,000-point pipeline.
 
 OUTPUT
 ──────
@@ -149,14 +149,14 @@ def normalize_sei(gdf: gpd.GeoDataFrame) -> gpd.GeoDataFrame:
 
 # =============================================================================
 # INACTIVE — kept for reference / optional daily time-series pipeline
-# These functions are NOT called in the spatial 3,000-point pipeline.
+# These functions are NOT called in the spatial 10,000-point pipeline.
 # =============================================================================
 
 def temporal_features(df: pd.DataFrame) -> pd.DataFrame:
     """
     [INACTIVE in spatial pipeline]
     Adds month, month_sin, month_cos, season to a NASA daily DataFrame.
-    Only relevant if running a daily time-series model (not the 3,000-point design).
+    Only relevant if running a daily time-series model (not the 10,000-point design).
     """
     if "date" not in df.columns:
         raise ValueError("Missing required column: 'date'")

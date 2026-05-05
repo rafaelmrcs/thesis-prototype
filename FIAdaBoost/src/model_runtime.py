@@ -25,7 +25,7 @@ SHARED_FEATURES = [
 # Learned SEI normalization reference from the training rooftop feature set.
 DEFAULT_SEI_NORMALIZER = 5368.320870273783
 
-# Coverage of the current 3,000-point training sample.
+# Coverage of the current 10,000-point training sample.
 DEFAULT_LAT_RANGE = (6.965095132565466, 7.602425835788297)
 DEFAULT_LON_RANGE = (125.21874705155416, 125.69388469799664)
 
