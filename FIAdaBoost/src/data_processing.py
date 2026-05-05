@@ -5,7 +5,7 @@ Cleans raw data files produced by data_acquisition.py.
 
 Changes from original:
   + process_baseline_spatial() uncommented and activated
-    — processes the 3,000-row spatial CSV that is the primary dataset
+    — processes the 20,000-row spatial CSV that is the primary dataset
 """
 import os
 import numpy as np
@@ -19,12 +19,12 @@ os.makedirs(PROCESSED_DIR, exist_ok=True)
 
 
 # =============================================================================
-# A) Baseline spatial dataset — 3,000 rows: lat, lon, GHI_mean
+# A) Baseline spatial dataset — 20,000 rows: lat, lon, GHI_mean
 # =============================================================================
 
 def process_baseline_spatial(year: str = "2024") -> pd.DataFrame:
     """
-    Clean the 3,000-row spatial dataset produced by
+    Clean the 20,000-row spatial dataset produced by
     fetch_nasa_baseline_spatial().
 
     Steps:
@@ -116,7 +116,7 @@ def process_osm() -> gpd.GeoDataFrame:
 if __name__ == "__main__":
     print("Processing data …")
 
-    # PRIMARY dataset: 3,000 spatial points
+    # PRIMARY dataset: 20,000 spatial points
     baseline_df = process_baseline_spatial(year="2024")
     baseline_df.to_csv(
         os.path.join(PROCESSED_DIR, "baseline_spatial_clean_2024.csv"),

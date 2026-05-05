@@ -1,12 +1,12 @@
 """
 data_integration.py
 ────────────────────────────────────────────────────────────────────────────
-Integrates the 3,000-point spatial dataset with per-building OSM features.
+Integrates the 20,000-point spatial dataset with per-building OSM features.
 
 DESIGN
 ──────
   Input A : baseline_spatial_clean_2024.csv
-              3,000 rows  —  lat | lon | GHI_mean_2024 (kWh/m²/day)
+              20,000 rows  —  lat | lon | GHI_mean_2024 (kWh/m²/day)
               (one row per random coordinate inside Davao City)
 
   Input B : osm_features.geojson
@@ -15,7 +15,7 @@ DESIGN
               tilt_factor, solar_exposure_index, SEI_norm
 
   Join method : Spatial nearest-neighbour
-              Each of the 3,000 random points is matched to the
+              Each of the 20,000 random points is matched to the
               geographically closest OSM building centroid.
               The matched building's features are attached to the point.
 
@@ -25,7 +25,7 @@ DESIGN
               are those of the nearest building — just as an on-site
               survey would measure the rooftop at that address.
 
-  Output : integrated_dataset.csv  —  3,000 rows
+  Output : integrated_dataset.csv  —  20,000 rows
               lat | lon | GHI_mean_J | rooftop_area_sq_m |
               orientation_score | shading_factor | tilt_factor | SEI_norm
 
