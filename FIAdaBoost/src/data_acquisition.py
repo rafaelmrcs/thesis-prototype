@@ -222,7 +222,7 @@ def fetch_osm_data(place_name: str = "Davao City, Philippines") -> None:
 # =============================================================================
 
 if __name__ == "__main__":
-    # 1) Baseline spatial dataset — 3,000 random coordinates → annual GHI
+    # 1) Baseline spatial dataset — 20,000 random coordinates → annual GHI
     #    This is the PRIMARY dataset for model training/testing.
     #    Replicates Quezon City study exactly (they used 3,000 coords + PVWatts).
     fetch_nasa_baseline_spatial(

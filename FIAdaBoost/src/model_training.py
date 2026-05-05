@@ -169,7 +169,7 @@ def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
 
 
 # =============================================================================
-# DATA LOADING — SPATIAL DATASET (3,000 points)
+# DATA LOADING — SPATIAL DATASET (20,000 points)
 # =============================================================================
 def load_dataset() -> pd.DataFrame:
     """

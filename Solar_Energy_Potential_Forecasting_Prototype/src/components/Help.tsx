@@ -49,7 +49,7 @@ export function Help() {
             This study evaluates whether a <strong>Feature-Importance-Aware AdaBoost (FI-AdaBoost)</strong> regression model can improve solar irradiance forecasting for rooftop suitability analysis compared to a standard AdaBoost baseline. The research focuses on <strong>Davao City, Philippines</strong> as the study area.
           </p>
           <p>
-            The pipeline samples 3,000 random coordinates within Davao City, fetches annual solar irradiance from <strong>NASA POWER</strong>, derives rooftop features from <strong>OpenStreetMap</strong> building footprints, and trains both models on the same target: <em>pvlib POA-adjusted effective irradiance (J/m²/day)</em>.
+            The pipeline samples 20,000 random coordinates within Davao City, fetches annual solar irradiance from <strong>NASA POWER</strong>, derives rooftop features from <strong>OpenStreetMap</strong> building footprints, and trains both models on the same target: <em>pvlib POA-adjusted effective irradiance (J/m²/day)</em>.
           </p>
           <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 space-y-1">
             <p>Solar Energy Potential (kWh/day)  = Predicted GHI (kWh/m²/day) × Rooftop Area (m²)</p>
@@ -188,7 +188,7 @@ export function Help() {
           {[
             {
               source: 'NASA POWER API',
-              what: 'Annual Global Horizontal Irradiance (GHI) at 3,000 random coordinates — 2024 data, ~50 km resolution grid',
+              what: 'Annual Global Horizontal Irradiance (GHI) at 20,000 random coordinates — 2024 data, ~50 km resolution grid',
               color: 'blue',
             },
             {
@@ -237,7 +237,7 @@ export function Help() {
               icon: <FlaskConical className="w-5 h-5 text-white" />,
               gradient: 'from-violet-500 to-fuchsia-600',
               tab: 'Global Analytics',
-              desc: 'City-wide solar energy potential summary across all 3,000 sampled buildings. Distribution charts, total annual SEP estimates, and per-building breakdowns comparing both models.',
+              desc: 'City-wide solar energy potential summary across all 20,000 sampled buildings. Distribution charts, total annual SEP estimates, and per-building breakdowns comparing both models.',
             },
           ].map(({ icon, gradient, tab, desc }) => (
             <div key={tab} className="flex gap-3 items-start rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
