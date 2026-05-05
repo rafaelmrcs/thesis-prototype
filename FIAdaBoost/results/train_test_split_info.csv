@@ -1,2 +1,2 @@
 total_samples,train_samples,test_samples,test_fraction,split_method,random_seed,target_col
-3000,2400,600,0.2,random_shuffle,42,Target_eff_J
+9999,7999,2000,0.2,random_shuffle,42,Target_eff_J
