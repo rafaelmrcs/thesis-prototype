@@ -26,7 +26,7 @@ def get_city_boundary(place_name: str) -> gpd.GeoDataFrame:
     return gdf
 
 
-def sample_random_points_in_polygon(polygon, n_points: int = 3000,
+def sample_random_points_in_polygon(polygon, n_points: int = 20000,
                                     seed: int = 42) -> gpd.GeoDataFrame:
     """
     Generate n_points uniformly distributed random coordinates inside the
@@ -90,7 +90,7 @@ def extract_series(js: dict, param: str) -> pd.Series:
 def fetch_nasa_baseline_spatial(
         place_name: str  = "Davao City, Philippines",
         year:       str  = "2024",
-        n_points:   int  = 3000,
+        n_points:   int  = 20000,
         seed:       int  = 42,
         sleep_s:    float = 0.2,
 ) -> None:
@@ -224,11 +224,11 @@ def fetch_osm_data(place_name: str = "Davao City, Philippines") -> None:
 if __name__ == "__main__":
     # 1) Baseline spatial dataset — 20,000 random coordinates → annual GHI
     #    This is the PRIMARY dataset for model training/testing.
-    #    Replicates Quezon City study exactly (they used 3,000 coords + PVWatts).
+    #    Scales the Quezon City study setup (3,000 coords + PVWatts) to 20,000 points.
     fetch_nasa_baseline_spatial(
         place_name="Davao City, Philippines",
         year="2024",
-        n_points=3000,
+        n_points=20000,
         seed=42,
     )
 
