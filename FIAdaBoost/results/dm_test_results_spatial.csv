@@ -1,2 +1,2 @@
 DM_statistic,p_value,significant_at_0.05,interpretation,n_test_samples,mean_loss_diff_J2
-10.0985,0.0,True,FI-AdaBoost significantly more accurate (p<0.05),600,759686985.28
+1.9284,0.053801,False,No statistically significant difference at α=0.05,600,3756689728.61

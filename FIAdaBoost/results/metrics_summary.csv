@@ -1,3 +1,3 @@
 model,target,RMSE_J,MAE_J,R2
-AdaBoost (Baseline),Effective GHI — pvlib POA-adjusted (J/m²/day),28360.933370033465,19821.402926410014,0.9799043362195474
-FI-AdaBoost (Proposed),Effective GHI — pvlib POA-adjusted (J/m²/day),6682.481301434991,5523.51270398944,0.9988843272613533
+AdaBoost (Baseline),Effective GHI — effective_GHI_J (J/m²/day),61685.68514347012,26544.16290570174,0.912658521558179
+FI-AdaBoost (Proposed),Effective GHI — effective_GHI_J (J/m²/day),6959.455654465937,5707.425859387237,0.9988882623923938
