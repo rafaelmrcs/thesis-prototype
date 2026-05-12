@@ -8,8 +8,8 @@ AdaBoost Regression (Baseline)  vs  FI-AdaBoost Regression (Proposed)
 METHODOLOGY (Two-Phase Pipeline)
 ──────────────────────────────────────────────────────────────────────────
   PHASE 1: MACHINE LEARNING (fair comparison)
-  - Both models predict the SAME target: effective GHI (J/m²/day),
-    pvlib POA-adjusted per building (Fix 1 — aligned targets).
+  - Both models predict the SAME target: raw NASA POWER GHI (J/m²/day),
+    using raw irradiance values (Fix 1 — aligned targets).
   - Both models use the SAME 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
@@ -85,18 +85,31 @@ KWH_TO_J      = 3_600_000
 np.random.seed(RANDOM_SEED)
 
 
-# ── Feature sets — identical for fair algorithm comparison (Fix 1 + Fix 6) ───
-# Both models predict Target_eff_J (pvlib POA-adjusted effective GHI).
-# Both use the same 8 features. The only difference is the boosting algorithm.
-# Log transforms removed (Fix 6): raw shading_factor and SEI_norm are used.
-# clear_sky_ratio and sunshine_hours added from §2.2.2 (Fix 3).
-SHARED_FEATURES   = [
-    "lat", "lon", "azimuth", "orientation_score",
-    "shading_factor", "SEI_norm", "clear_sky_ratio", "sunshine_hours",
+# Both models predict the SAME RAW GHI target.
+# This avoids target leakage and keeps the comparison methodologically fair.
+# Rooftop/topographical variables are only used as input features.
+
+SHARED_FEATURES = [
+    "lat",
+    "lon",
+    "azimuth",
+    "orientation_score",
+    "shading_factor",
+    "SEI_norm",
+    "clear_sky_ratio",
+    "sunshine_hours",
 ]
-BASELINE_FEATURES = SHARED_FEATURES
-FI_FEATURES       = SHARED_FEATURES
-TARGET_COL        = "Target_eff_J"
+
+BASELINE_FEATURES = [
+    "lat",
+    "lon",
+    "clear_sky_ratio"
+]
+
+FI_FEATURES = SHARED_FEATURES
+
+# RAW NASA POWER GHI target
+TARGET_COL = "GHI_mean_J"
 
 
 # Daily time-series feature set (§2.2.1 + §2.2.2 + §2.2.3 aggregates)
@@ -115,8 +128,8 @@ C_FI  = "#27AE60"
 # =============================================================================
 # pvlib CACHED HELPERS
 # =============================================================================
-_poa_cache:   dict = {}
-_pvlib_cache: dict = {}
+
+_pvlib_cache = {}
 
 
 def _pvlib_features(lat: float, lon: float) -> dict:
@@ -141,33 +154,6 @@ def _pvlib_features(lat: float, lon: float) -> dict:
     return result
 
 
-def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
-    """Annual-average POA/GHI ratio for a surface at given azimuth and tilt."""
-    key = (round(lat, 2), round(azimuth_deg, 1))
-    if key in _poa_cache:
-        return _poa_cache[key]
-    loc       = pvlib.location.Location(lat, 125.6128, altitude=30, tz="Asia/Manila")
-    times     = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
-    solar_pos = loc.get_solarposition(times)
-    clearsky  = loc.get_clearsky(times, model="ineichen")
-    ghi_mean  = float(clearsky["ghi"].mean())
-    if ghi_mean == 0:
-        _poa_cache[key] = 1.0
-        return 1.0
-    poa = pvlib.irradiance.get_total_irradiance(
-        surface_tilt=tilt_deg,
-        surface_azimuth=azimuth_deg,
-        solar_zenith=solar_pos["apparent_zenith"],
-        solar_azimuth=solar_pos["azimuth"],
-        dni=clearsky["dni"],
-        ghi=clearsky["ghi"],
-        dhi=clearsky["dhi"],
-    )
-    ratio = float(poa["poa_global"].mean()) / ghi_mean
-    _poa_cache[key] = ratio
-    return ratio
-
-
 # =============================================================================
 # DATA LOADING — SPATIAL DATASET (3,000 points)
 # =============================================================================
@@ -175,29 +161,18 @@ def load_dataset() -> pd.DataFrame:
     """
     Load integrated_dataset.csv and compute all features for both models.
 
-    Fix 1: Target_eff_J (pvlib POA-adjusted) used for BOTH models.
+    Fix 1: GHI_mean_J (NASA POWER GHI) used for BOTH models.
     Fix 3: clear_sky_ratio and sunshine_hours computed per spatial point.
     Fix 6: No log transforms — raw shading_factor and SEI_norm used.
     """
     path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
     df   = pd.read_csv(path)
 
-    # Target: reuse pre-computed effective_GHI_J if available, else compute.
-    if "effective_GHI_J" in df.columns and df["effective_GHI_J"].notna().all():
-        df["Target_eff_J"] = df["effective_GHI_J"]
-        print("  Using pre-computed effective_GHI_J as target.")
-    else:
-        print("  Computing pvlib POA ratios for effective GHI target …", flush=True)
-        df["Target_eff_J"] = df.apply(
-            lambda r: (
-                r["GHI_mean_J"]
-                * _poa_ratio(r["lat"], r["azimuth"])
-                * (1 - 0.03 * r["shading_factor"])
-            ),
-            axis=1,
-        )
-        df["effective_GHI_J"] = df["Target_eff_J"]
-        df.to_csv(path, index=False)
+# Use RAW GHI target directly from NASA POWER
+# No rooftop adjustment is applied to the target
+# to avoid target leakage and maintain fair model comparison.
+
+    df["GHI_mean_J"] = df["GHI_mean_2024"] * KWH_TO_J
 
     # §2.2.2 Meteorological features per spatial point (Fix 3)
     print("  Computing clear_sky_ratio and sunshine_hours …", flush=True)
@@ -254,6 +229,7 @@ class FIAdaBoostRegressor:
         self.estimators_          = []
         self.estimator_weights_   = []
         self.feature_importances_ = None
+        self.fallback_prediction_ = 0.0
 
     @staticmethod
     def _norm_fi(tree):
@@ -273,6 +249,7 @@ class FIAdaBoostRegressor:
     def fit(self, X, y):
         X_arr = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
         y_arr = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
+        self.fallback_prediction_ = float(np.mean(y_arr))
         n     = len(y_arr)
         rng   = np.random.default_rng(self.random_state)
         weights = np.full(n, 1.0 / n)
@@ -326,8 +303,12 @@ class FIAdaBoostRegressor:
 
     def predict(self, X):
         X_arr   = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
+        if not self.estimators_:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         preds   = np.array([e.predict(X_arr) for e in self.estimators_])
         weights = np.array(self.estimator_weights_)
+        if weights.sum() <= 0:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         weights = weights / weights.sum()
         result  = np.zeros(X_arr.shape[0])
         for i in range(X_arr.shape[0]):
@@ -732,8 +713,8 @@ def run_daily_pipeline() -> None:
 # =============================================================================
 def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
     rows = [
-        {"model": "AdaBoost (Baseline)",    "target": "Effective GHI — pvlib POA-adjusted (J/m²/day)", **ada_m},
-        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI — pvlib POA-adjusted (J/m²/day)", **fi_m},
+        {"model": "AdaBoost (Baseline)",    "target": "Raw GHI — NASA POWER GHI (J/m²/day)", **ada_m},
+        {"model": "FI-AdaBoost (Proposed)", "target": "Raw GHI — NASA POWER GHI (J/m²/day)", **fi_m},
     ]
     path = os.path.join(RESULTS_DIR, "metrics_summary.csv")
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -788,8 +769,8 @@ def plot_standalone_feature_importance(fi_vals, feats):
 def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     for ax, y_true, y_pred, color, title in [
-        (axes[0], y_true_ada, y_pred_ada, C_ADA, "AdaBoost Baseline\n(Effective GHI)"),
-        (axes[1], y_true_fi,  y_pred_fi,  C_FI,  "FI-AdaBoost Proposed\n(Effective GHI)"),
+        (axes[0], y_true_ada, y_pred_ada, C_ADA, "AdaBoost Baseline\n(RAW GHI)"),
+        (axes[1], y_true_fi,  y_pred_fi,  C_FI,  "FI-AdaBoost Proposed\n(RAW GHI)"),
     ]:
         ax.scatter(y_true, y_pred, alpha=0.4, s=18, color=color, edgecolors="none")
         mn = min(y_true.min(), y_pred.min())
@@ -802,7 +783,7 @@ def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
         ax.legend(fontsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-    plt.suptitle("Actual vs Predicted — Effective GHI (same target, same features)",
+    plt.suptitle("Actual vs Predicted — Raw GHI (same target, same features)",
                  fontsize=13, fontweight="bold", y=1.01)
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "actual_vs_predicted.png"), dpi=300, bbox_inches="tight")

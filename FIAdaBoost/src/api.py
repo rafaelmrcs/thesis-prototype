@@ -643,13 +643,14 @@ class ModelContext:
             )
 
         df = pd.read_csv(INTEGRATED_DATA_FILE)
-        if "effective_GHI_J" not in df.columns:
-            if TARGET_COL in df.columns:
-                df["effective_GHI_J"] = df[TARGET_COL]
+        if TARGET_COL not in df.columns:
+            if "GHI_mean_2024" in df.columns:
+                df[TARGET_COL] = df["GHI_mean_2024"] * KWH_TO_J
             else:
                 raise ValueError(
-                    "integrated_dataset.csv is missing 'effective_GHI_J'."
+                    f"integrated_dataset.csv is missing '{TARGET_COL}'."
                 )
+        df["effective_GHI_J"] = df[TARGET_COL]
 
         if "clear_sky_ratio" not in df.columns or "sunshine_hours" not in df.columns:
             pvlib_features = df.apply(

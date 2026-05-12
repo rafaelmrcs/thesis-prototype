@@ -9,7 +9,7 @@ from sklearn.tree import DecisionTreeRegressor
 
 RANDOM_SEED = 42
 KWH_TO_J = 3_600_000
-TARGET_COL = "Target_eff_J"
+TARGET_COL = "GHI_mean_J"
 
 SHARED_FEATURES = [
     "lat",
@@ -73,6 +73,7 @@ class FIAdaBoostRegressor:
         self.estimators_ = []
         self.estimator_weights_ = []
         self.feature_importances_ = None
+        self.fallback_prediction_ = 0.0
 
     @staticmethod
     def _norm_fi(tree) -> np.ndarray:
@@ -92,6 +93,7 @@ class FIAdaBoostRegressor:
     def fit(self, X, y):
         X_arr = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
         y_arr = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
+        self.fallback_prediction_ = float(np.mean(y_arr))
 
         n_rows = len(y_arr)
         rng = np.random.default_rng(self.random_state)
@@ -146,8 +148,12 @@ class FIAdaBoostRegressor:
 
     def predict(self, X):
         X_arr = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
+        if not self.estimators_:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         predictions = np.array([est.predict(X_arr) for est in self.estimators_])
         weights = np.asarray(self.estimator_weights_, dtype=float)
+        if weights.sum() <= 0:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         weights = weights / weights.sum()
 
         result = np.zeros(X_arr.shape[0])
