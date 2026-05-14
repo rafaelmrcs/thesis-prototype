@@ -8,8 +8,8 @@ AdaBoost Regression (Baseline)  vs  FI-AdaBoost Regression (Proposed)
 METHODOLOGY (Two-Phase Pipeline)
 ──────────────────────────────────────────────────────────────────────────
   PHASE 1: MACHINE LEARNING (fair comparison)
-  - Both models predict the SAME target: effective GHI (J/m²/day),
-    pvlib POA-adjusted per building (Fix 1 — aligned targets).
+  - Both models predict the SAME target: engineered effective_GHI_J
+    (Fix 1 - aligned targets).
   - Both models use the SAME 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
@@ -86,7 +86,7 @@ np.random.seed(RANDOM_SEED)
 
 
 # ── Feature sets — identical for fair algorithm comparison (Fix 1 + Fix 6) ───
-# Both models predict Target_eff_J (pvlib POA-adjusted effective GHI).
+# Both models predict engineered effective_GHI_J.
 # Both use the same 8 features. The only difference is the boosting algorithm.
 # Log transforms removed (Fix 6): raw shading_factor and SEI_norm are used.
 # clear_sky_ratio and sunshine_hours added from §2.2.2 (Fix 3).
@@ -96,7 +96,7 @@ SHARED_FEATURES   = [
 ]
 BASELINE_FEATURES = SHARED_FEATURES
 FI_FEATURES       = SHARED_FEATURES
-TARGET_COL        = "Target_eff_J"
+TARGET_COL        = "effective_GHI_J"
 
 
 # Daily time-series feature set (§2.2.1 + §2.2.2 + §2.2.3 aggregates)
@@ -115,7 +115,6 @@ C_FI  = "#27AE60"
 # =============================================================================
 # pvlib CACHED HELPERS
 # =============================================================================
-_poa_cache:   dict = {}
 _pvlib_cache: dict = {}
 
 
@@ -141,31 +140,40 @@ def _pvlib_features(lat: float, lon: float) -> dict:
     return result
 
 
-def _poa_ratio(lat: float, azimuth_deg: float, tilt_deg: float = 10.0) -> float:
-    """Annual-average POA/GHI ratio for a surface at given azimuth and tilt."""
-    key = (round(lat, 2), round(azimuth_deg, 1))
-    if key in _poa_cache:
-        return _poa_cache[key]
-    loc       = pvlib.location.Location(lat, 125.6128, altitude=30, tz="Asia/Manila")
-    times     = pd.date_range("2024-01-01", "2024-12-31 23:00", freq="h", tz="Asia/Manila")
-    solar_pos = loc.get_solarposition(times)
-    clearsky  = loc.get_clearsky(times, model="ineichen")
-    ghi_mean  = float(clearsky["ghi"].mean())
-    if ghi_mean == 0:
-        _poa_cache[key] = 1.0
-        return 1.0
-    poa = pvlib.irradiance.get_total_irradiance(
-        surface_tilt=tilt_deg,
-        surface_azimuth=azimuth_deg,
-        solar_zenith=solar_pos["apparent_zenith"],
-        solar_azimuth=solar_pos["azimuth"],
-        dni=clearsky["dni"],
-        ghi=clearsky["ghi"],
-        dhi=clearsky["dhi"],
-    )
-    ratio = float(poa["poa_global"].mean()) / ghi_mean
-    _poa_cache[key] = ratio
-    return ratio
+def _ensure_spatial_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
+    """Generate required spatial columns for expanded datasets before training."""
+    changed = False
+
+    if "azimuth" not in df.columns and "orientation_score" in df.columns:
+        score = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
+        df["azimuth"] = 180.0 - np.degrees(np.arccos((2.0 * score) - 1.0))
+        changed = True
+
+    if "GHI_mean_J" not in df.columns and "GHI_mean_2024" in df.columns:
+        df["GHI_mean_J"] = pd.to_numeric(df["GHI_mean_2024"], errors="coerce") * KWH_TO_J
+        changed = True
+
+    orientation = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
+    shading = pd.to_numeric(df["shading_factor"], errors="coerce").clip(0.0, 1.0)
+    adjustment = (0.97 + 0.03 * orientation - 0.10 * shading).clip(0.85, 1.05)
+    expected_effective = pd.to_numeric(df["GHI_mean_J"], errors="coerce") * adjustment
+
+    needs_effective = "effective_GHI_J" not in df.columns or df["effective_GHI_J"].isna().any()
+    if not needs_effective:
+        existing_effective = pd.to_numeric(df["effective_GHI_J"], errors="coerce")
+        needs_effective = not np.allclose(
+            existing_effective.to_numpy(),
+            expected_effective.to_numpy(),
+            rtol=1e-6,
+            atol=1e-3,
+            equal_nan=False,
+        )
+    if needs_effective:
+        df["effective_GHI_J"] = expected_effective
+        changed = True
+
+    df["Target_eff_J"] = df["effective_GHI_J"]
+    return df, changed
 
 
 # =============================================================================
@@ -175,41 +183,46 @@ def load_dataset() -> pd.DataFrame:
     """
     Load integrated_dataset.csv and compute all features for both models.
 
-    Fix 1: Target_eff_J (pvlib POA-adjusted) used for BOTH models.
+    Fix 1: effective_GHI_J used for BOTH models.
+    Fix 2: Baseline and FI-AdaBoost use the SAME 8-feature vector.
     Fix 3: clear_sky_ratio and sunshine_hours computed per spatial point.
     Fix 6: No log transforms — raw shading_factor and SEI_norm used.
     """
     path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
     df   = pd.read_csv(path)
 
-    # Target: reuse pre-computed effective_GHI_J if available, else compute.
-    if "effective_GHI_J" in df.columns and df["effective_GHI_J"].notna().all():
-        df["Target_eff_J"] = df["effective_GHI_J"]
-        print("  Using pre-computed effective_GHI_J as target.")
-    else:
-        print("  Computing pvlib POA ratios for effective GHI target …", flush=True)
-        df["Target_eff_J"] = df.apply(
-            lambda r: (
-                r["GHI_mean_J"]
-                * _poa_ratio(r["lat"], r["azimuth"])
-                * (1 - 0.03 * r["shading_factor"])
-            ),
-            axis=1,
-        )
-        df["effective_GHI_J"] = df["Target_eff_J"]
-        df.to_csv(path, index=False)
+    df["GHI_mean_J"] = pd.to_numeric(df["GHI_mean_2024"], errors="coerce") * KWH_TO_J
+    df, generated_features = _ensure_spatial_columns(df)
+    if generated_features:
+        print("  Generated missing spatial target columns for expanded dataset.", flush=True)
 
-    # §2.2.2 Meteorological features per spatial point (Fix 3)
-    print("  Computing clear_sky_ratio and sunshine_hours …", flush=True)
-    pvlib_feats = df.apply(
-        lambda r: pd.Series(_pvlib_features(r["lat"], r["lon"])), axis=1
+    needs_clearsky = (
+        "clear_sky_ratio" not in df.columns
+        or "sunshine_hours" not in df.columns
+        or df["clear_sky_ratio"].isna().any()
+        or df["sunshine_hours"].isna().any()
     )
-    df["sunshine_hours"]  = pvlib_feats["sunshine_hours"]
-    df["clear_sky_ratio"] = (
-        df["GHI_mean_2024"] / pvlib_feats["ghi_clear_annual"]
-    ).clip(0.0, 1.5)
 
+    if needs_clearsky:
+        # Clear-sky/sunshine features only.
+        print("  Computing clear_sky_ratio and sunshine_hours ...", flush=True)
+        pvlib_feats = df.apply(
+            lambda r: pd.Series(_pvlib_features(r["lat"], r["lon"])), axis=1
+        )
+        df["sunshine_hours"] = pvlib_feats["sunshine_hours"]
+        df["clear_sky_ratio"] = (
+            pd.to_numeric(df["GHI_mean_2024"], errors="coerce") / pvlib_feats["ghi_clear_annual"]
+        ).clip(0.0, 1.5)
+    else:
+        print("  Using pre-computed clear_sky_ratio and sunshine_hours.", flush=True)
+
+    if generated_features or needs_clearsky:
+        df.to_csv(path, index=False)
+        print("  Saved generated features back to CSV.", flush=True)
+
+    df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors="coerce")
     return df
+
 
 
 def random_split(df: pd.DataFrame, test_size: float = 0.20):
@@ -254,6 +267,7 @@ class FIAdaBoostRegressor:
         self.estimators_          = []
         self.estimator_weights_   = []
         self.feature_importances_ = None
+        self.fallback_prediction_ = 0.0
 
     @staticmethod
     def _norm_fi(tree):
@@ -273,6 +287,7 @@ class FIAdaBoostRegressor:
     def fit(self, X, y):
         X_arr = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
         y_arr = y.to_numpy() if hasattr(y, "to_numpy") else np.asarray(y)
+        self.fallback_prediction_ = float(np.mean(y_arr))
         n     = len(y_arr)
         rng   = np.random.default_rng(self.random_state)
         weights = np.full(n, 1.0 / n)
@@ -326,8 +341,12 @@ class FIAdaBoostRegressor:
 
     def predict(self, X):
         X_arr   = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
+        if not self.estimators_:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         preds   = np.array([e.predict(X_arr) for e in self.estimators_])
         weights = np.array(self.estimator_weights_)
+        if weights.sum() <= 0:
+            return np.full(X_arr.shape[0], self.fallback_prediction_, dtype=float)
         weights = weights / weights.sum()
         result  = np.zeros(X_arr.shape[0])
         for i in range(X_arr.shape[0]):
@@ -732,8 +751,8 @@ def run_daily_pipeline() -> None:
 # =============================================================================
 def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
     rows = [
-        {"model": "AdaBoost (Baseline)",    "target": "Effective GHI — pvlib POA-adjusted (J/m²/day)", **ada_m},
-        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI — pvlib POA-adjusted (J/m²/day)", **fi_m},
+        {"model": "AdaBoost (Baseline)",    "target": "Effective GHI - effective_GHI_J (J/m2/day)", **ada_m},
+        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI - effective_GHI_J (J/m2/day)", **fi_m},
     ]
     path = os.path.join(RESULTS_DIR, "metrics_summary.csv")
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -936,6 +955,7 @@ def main():
     print("\n[1/6] Loading spatial dataset and computing features …")
     df = load_dataset()
     print(f"  Rows: {len(df)}")
+    print(f"  Target: {TARGET_COL} ({df[TARGET_COL].nunique()} unique values)")
     print(f"  Baseline features ({len(BASELINE_FEATURES)}): {BASELINE_FEATURES}")
     print(f"  FI-AdaBoost features ({len(FI_FEATURES)}): {FI_FEATURES}")
 
