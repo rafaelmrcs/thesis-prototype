@@ -1,2 +1,2 @@
 DM_statistic,p_value,significant_at_0.05,interpretation,n_test_samples,mean_loss_diff_J2
--1.4202,0.155561,False,No statistically significant difference at α=0.05,600,-2982993368.61
+-12.3955,0.0,True,AdaBoost baseline significantly more accurate (p<0.05),600,-20335429.16
