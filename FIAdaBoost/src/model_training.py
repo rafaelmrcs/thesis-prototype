@@ -10,7 +10,7 @@ METHODOLOGY (Two-Phase Pipeline)
   PHASE 1: MACHINE LEARNING (fair comparison)
   - Both models predict the SAME target: engineered effective_GHI_J
     (Fix 1 - aligned targets).
-  - Both models use the SAME 8 features (8 vs 8; Fix 6 - no log transforms):
+  - Both models use the SAME 8 features (Fix 6 — no log transforms):
       lat, lon, azimuth, orientation_score, shading_factor, SEI_norm,
       clear_sky_ratio, sunshine_hours  (Fix 3 — meteo features active)
   - Hyperparameters tuned via Optuna + 5-fold KFold (Fix 4).
@@ -30,6 +30,8 @@ METHODOLOGY (Two-Phase Pipeline)
   PHASE 2: SOLAR ENERGY POTENTIAL FORECASTING
   - Converts predicted irradiance into theoretical rooftop solar energy
     potential: SEP = predicted GHI (kWh/m2/day) x OSM rooftop area (m2).
+  - Panel efficiency and performance ratio are intentionally excluded because
+    electrical PV output is outside this study scope.
 ────────────────────────────────────────────────────────────────────────────
 """
 
@@ -83,24 +85,18 @@ KWH_TO_J      = 3_600_000
 np.random.seed(RANDOM_SEED)
 
 
-# ── Feature sets ──────────────────────────────────────────────────────────────
-# Both models predict effective_GHI_J and use the same 8 features.
-# The only algorithmic difference is the boosting update.
+# ── Feature sets — identical for fair algorithm comparison (Fix 1 + Fix 6) ───
+# Both models predict engineered effective_GHI_J.
+# Both use the same 8 features. The only difference is the boosting algorithm.
 # Log transforms removed (Fix 6): raw shading_factor and SEI_norm are used.
 # clear_sky_ratio and sunshine_hours added from §2.2.2 (Fix 3).
-SHARED_FEATURES = [
-    "lat",
-    "lon",
-    "azimuth",
-    "orientation_score",
-    "shading_factor",
-    "SEI_norm",
-    "clear_sky_ratio",
-    "sunshine_hours",
+SHARED_FEATURES   = [
+    "lat", "lon", "azimuth", "orientation_score",
+    "shading_factor", "SEI_norm", "clear_sky_ratio", "sunshine_hours",
 ]
 BASELINE_FEATURES = SHARED_FEATURES
-FI_FEATURES = SHARED_FEATURES
-TARGET_COL = "effective_GHI_J"
+FI_FEATURES       = SHARED_FEATURES
+TARGET_COL        = "effective_GHI_J"
 
 
 # Daily time-series feature set (§2.2.1 + §2.2.2 + §2.2.3 aggregates)
@@ -119,7 +115,7 @@ C_FI  = "#27AE60"
 # =============================================================================
 # pvlib CACHED HELPERS
 # =============================================================================
-_pvlib_cache = {}
+_pvlib_cache: dict = {}
 
 
 def _pvlib_features(lat: float, lon: float) -> dict:
@@ -157,16 +153,23 @@ def _ensure_spatial_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
         df["GHI_mean_J"] = pd.to_numeric(df["GHI_mean_2024"], errors="coerce") * KWH_TO_J
         changed = True
 
-    needs_effective = (
-        "effective_GHI_J" not in df.columns
-        or df["effective_GHI_J"].isna().any()
-        or df["effective_GHI_J"].nunique(dropna=True) <= df["GHI_mean_J"].nunique(dropna=True)
-    )
+    orientation = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
+    shading = pd.to_numeric(df["shading_factor"], errors="coerce").clip(0.0, 1.0)
+    adjustment = (0.97 + 0.03 * orientation - 0.10 * shading).clip(0.85, 1.05)
+    expected_effective = pd.to_numeric(df["GHI_mean_J"], errors="coerce") * adjustment
+
+    needs_effective = "effective_GHI_J" not in df.columns or df["effective_GHI_J"].isna().any()
+    if not needs_effective:
+        existing_effective = pd.to_numeric(df["effective_GHI_J"], errors="coerce")
+        needs_effective = not np.allclose(
+            existing_effective.to_numpy(),
+            expected_effective.to_numpy(),
+            rtol=1e-6,
+            atol=1e-3,
+            equal_nan=False,
+        )
     if needs_effective:
-        orientation = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
-        shading = pd.to_numeric(df["shading_factor"], errors="coerce").clip(0.0, 1.0)
-        adjustment = (0.97 + 0.03 * orientation - 0.10 * shading).clip(0.85, 1.05)
-        df["effective_GHI_J"] = pd.to_numeric(df["GHI_mean_J"], errors="coerce") * adjustment
+        df["effective_GHI_J"] = expected_effective
         changed = True
 
     df["Target_eff_J"] = df["effective_GHI_J"]
@@ -174,7 +177,7 @@ def _ensure_spatial_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
 
 
 # =============================================================================
-# DATA LOADING - SPATIAL DATASET (~20,000 points)
+# DATA LOADING — SPATIAL DATASET (10,000 points)
 # =============================================================================
 def load_dataset() -> pd.DataFrame:
     """
@@ -199,8 +202,9 @@ def load_dataset() -> pd.DataFrame:
         or df["clear_sky_ratio"].isna().any()
         or df["sunshine_hours"].isna().any()
     )
+
     if needs_clearsky:
-        # Clear-sky/sunshine features only. Tilted-plane irradiance is not used.
+        # Clear-sky/sunshine features only.
         print("  Computing clear_sky_ratio and sunshine_hours ...", flush=True)
         pvlib_feats = df.apply(
             lambda r: pd.Series(_pvlib_features(r["lat"], r["lon"])), axis=1
@@ -217,8 +221,8 @@ def load_dataset() -> pd.DataFrame:
         print("  Saved generated features back to CSV.", flush=True)
 
     df[TARGET_COL] = pd.to_numeric(df[TARGET_COL], errors="coerce")
-
     return df
+
 
 
 def random_split(df: pd.DataFrame, test_size: float = 0.20):
@@ -747,8 +751,8 @@ def run_daily_pipeline() -> None:
 # =============================================================================
 def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
     rows = [
-        {"model": "AdaBoost (Baseline)",    "target": "Effective GHI — effective_GHI_J (J/m²/day)", **ada_m},
-        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI — effective_GHI_J (J/m²/day)", **fi_m},
+        {"model": "AdaBoost (Baseline)",    "target": "Effective GHI - effective_GHI_J (J/m2/day)", **ada_m},
+        {"model": "FI-AdaBoost (Proposed)", "target": "Effective GHI - effective_GHI_J (J/m2/day)", **fi_m},
     ]
     path = os.path.join(RESULTS_DIR, "metrics_summary.csv")
     pd.DataFrame(rows).to_csv(path, index=False)
@@ -883,7 +887,7 @@ def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
         ax.legend(fontsize=9)
         ax.spines["top"].set_visible(False)
         ax.spines["right"].set_visible(False)
-    plt.suptitle("Per-Building Solar Energy Yield Distribution — Phase 2 Forecast",
+    plt.suptitle("Per-Building Theoretical Solar Energy Potential Distribution — Phase 2 Forecast",
                  fontsize=13, fontweight="bold")
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "energy_distribution.png"), dpi=300, bbox_inches="tight")
@@ -899,7 +903,7 @@ def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame
     for bar, val in zip(bars, [ada_kwh, fi_kwh]):
         ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
                 f"{val:,.0f} kWh", ha="center", va="bottom", fontsize=11, fontweight="bold")
-    ax.set_ylabel("Total Solar Energy Yield (kWh/year)", fontsize=11)
+    ax.set_ylabel("Total Theoretical Solar Energy Potential (kWh/year)", fontsize=11)
     ax.set_title("Total Rooftop Solar Potential — Davao City\nPhase 2 Energy Forecast",
                  fontsize=13, fontweight="bold")
     ax.set_ylim(0, max(ada_kwh, fi_kwh) * 1.18)
