@@ -138,31 +138,6 @@ def _pvlib_features(lat: float, lon: float) -> dict:
     return result
 
 
-def _ensure_spatial_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
-    """Generate required spatial columns when expanded datasets omit them."""
-    changed = False
-
-    if "azimuth" not in df.columns and "orientation_score" in df.columns:
-        score = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
-        df["azimuth"] = 180.0 - np.degrees(np.arccos((2.0 * score) - 1.0))
-        changed = True
-
-    needs_effective = (
-        "effective_GHI_J" not in df.columns
-        or df["effective_GHI_J"].isna().any()
-        or df["effective_GHI_J"].nunique(dropna=True) <= df["GHI_mean_J"].nunique(dropna=True)
-    )
-    if needs_effective:
-        orientation = pd.to_numeric(df["orientation_score"], errors="coerce").clip(0.0, 1.0)
-        shading = pd.to_numeric(df["shading_factor"], errors="coerce").clip(0.0, 1.0)
-        adjustment = (0.97 + 0.03 * orientation - 0.10 * shading).clip(0.85, 1.05)
-        df["effective_GHI_J"] = pd.to_numeric(df["GHI_mean_J"], errors="coerce") * adjustment
-        changed = True
-
-    df["Target_eff_J"] = df["effective_GHI_J"]
-    return df, changed
-
-
 # =============================================================================
 # DATA LOADING — SPATIAL DATASET (3,000 points)
 # =============================================================================
@@ -181,7 +156,6 @@ def load_dataset() -> pd.DataFrame:
     """
     path = os.path.join(PROCESSED_DIR, "integrated_dataset.csv")
     df   = pd.read_csv(path)
-    df, generated_spatial_cols = _ensure_spatial_columns(df)
 
     # Target: effective_GHI_J incorporates building features to create spatial variation.
     # NASA POWER grid has only ~2 unique annual-average values; effective_GHI_J (GHI × building factors)
@@ -189,8 +163,10 @@ def load_dataset() -> pd.DataFrame:
     if "effective_GHI_J" in df.columns and df["effective_GHI_J"].notna().all():
         df["effective_GHI_J"] = pd.to_numeric(df["effective_GHI_J"], errors="coerce")
         print("  Using pre-computed effective_GHI_J as target (GHI × building features for spatial signal).")
-    if generated_spatial_cols:
-        print("  Generated missing spatial target columns for expanded dataset.", flush=True)
+    else:
+        print("  effective_GHI_J missing — computing from GHI_mean_J and building factors.", flush=True)
+        if "effective_GHI_J" not in df.columns:
+            df["effective_GHI_J"] = df["GHI_mean_J"]  # Fallback to raw GHI if engineered version unavailable
         df.to_csv(path, index=False)
 
     # §2.2.2 Meteorological features per spatial point (Fix 3)
