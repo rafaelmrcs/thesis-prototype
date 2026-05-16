@@ -41,48 +41,48 @@ export default function App() {
       {/* Main Content */}
       <main className="max-w-7xl mx-auto px-4 py-8">
         <Tabs defaultValue="forecasting" className="w-full">
-          <TabsList className="grid w-full max-w-4xl mx-auto grid-cols-5 mb-8 h-12 p-1 bg-white shadow-md border border-gray-200">
-            <TabsTrigger 
-              value="forecasting" 
-              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-            >
-              <Sun className="w-4 h-4" />
-              <span className="hidden sm:inline">Forecasting Tool</span>
-              <span className="sm:hidden">Forecast</span>
-            </TabsTrigger>
-            <TabsTrigger 
-              value="analytics" 
-              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-cyan-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-            >
-              <BarChart3 className="w-4 h-4" />
-              <span className="hidden sm:inline">Location Analysis</span>
-              <span className="sm:hidden">Location</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="global"
-              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-            >
-              <FlaskConical className="w-4 h-4" />
-              <span className="hidden sm:inline">Model Analysis</span>
-              <span className="sm:hidden">Global</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="help"
-              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-slate-600 data-[state=active]:to-slate-700 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-            >
-              <HelpCircle className="w-4 h-4" />
-              <span className="hidden sm:inline">Help</span>
-              <span className="sm:hidden">Help</span>
-            </TabsTrigger>
-            <TabsTrigger
-              value="feedback"
-              className="flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-            >
-              <MessageSquare className="w-4 h-4" />
-              <span className="hidden sm:inline">Feedback</span>
-              <span className="sm:hidden">Feedback</span>
-            </TabsTrigger>
-          </TabsList>
+          <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 sm:pb-0 mb-8">
+            <TabsList className="flex w-max sm:grid sm:w-full sm:max-w-4xl sm:mx-auto sm:grid-cols-5 h-12 p-1 bg-white shadow-md border border-gray-200">
+              <TabsTrigger
+                value="forecasting"
+                className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+              >
+                <Sun className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Forecasting Tool</span>
+                <span className="sm:hidden">Forecast</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="analytics"
+                className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-blue-500 data-[state=active]:to-cyan-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+              >
+                <BarChart3 className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Location Analysis</span>
+                <span className="sm:hidden">Location</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="global"
+                className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+              >
+                <FlaskConical className="w-4 h-4 shrink-0" />
+                <span className="hidden sm:inline">Model Analysis</span>
+                <span className="sm:hidden">Analysis</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="help"
+                className="min-w-[80px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-slate-600 data-[state=active]:to-slate-700 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+              >
+                <HelpCircle className="w-4 h-4 shrink-0" />
+                <span>Help</span>
+              </TabsTrigger>
+              <TabsTrigger
+                value="feedback"
+                className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
+              >
+                <MessageSquare className="w-4 h-4 shrink-0" />
+                <span>Feedback</span>
+              </TabsTrigger>
+            </TabsList>
+          </div>
           
           <TabsContent value="forecasting" className="mt-0">
             <ForecastingTool

@@ -658,14 +658,42 @@ export function GlobalModelAnalytics() {
           {backendBase ? (
             <div className="grid grid-cols-1 gap-6 sm:grid-cols-2">
               {[
-                { file: 'metrics_comparison.png', caption: 'Metrics Comparison' },
-                { file: 'actual_vs_predicted.png', caption: 'Actual vs Predicted' },
-                { file: 'residuals.png', caption: 'Residual Analysis' },
-                { file: 'overfit_check.png', caption: 'Overfit Check (Train vs Val)' },
-                { file: 'standalone_feature_importances.png', caption: 'Feature Importances' },
-                { file: 'energy_distribution.png', caption: 'Energy Distribution' },
-                { file: 'total_energy_comparison.png', caption: 'Total Energy Comparison' },
-              ].map(({ file, caption }) => (
+                {
+                  file: 'metrics_comparison.png',
+                  caption: 'Metrics Comparison',
+                  description: 'Side-by-side bar chart of RMSE, MAE, and R² for both models on the held-out test set. Lower RMSE and MAE, and higher R², indicate better performance.',
+                },
+                {
+                  file: 'actual_vs_predicted.png',
+                  caption: 'Actual vs Predicted',
+                  description: 'Scatter plot of predicted vs actual effective GHI values. Points clustered along the dashed diagonal indicate accurate predictions; deviation signals systematic error.',
+                },
+                {
+                  file: 'residuals.png',
+                  caption: 'Residual Analysis',
+                  description: 'Residual plot (actual − predicted) vs predicted value. A horizontal band centred near zero indicates unbiased predictions; patterns or fanning suggest model misfit.',
+                },
+                {
+                  file: 'overfit_check.png',
+                  caption: 'Overfit Check (Train vs Test)',
+                  description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
+                },
+                {
+                  file: 'standalone_feature_importances.png',
+                  caption: 'Feature Importances',
+                  description: 'Weighted feature importance from FI-AdaBoost weak learners. Higher bars contributed more to the boosting decisions; features on the right drive the most prediction variance.',
+                },
+                {
+                  file: 'energy_distribution.png',
+                  caption: 'Energy Distribution',
+                  description: 'Per-building annual solar energy yield distribution across all 3,000 Davao City rooftops. The dashed line marks the mean yield; the spread reflects rooftop geometry and orientation diversity.',
+                },
+                {
+                  file: 'total_energy_comparison.png',
+                  caption: 'Total Energy Comparison',
+                  description: 'Aggregate rooftop solar energy potential (kWh/year) for Davao City by model. The difference between bars quantifies how the feature-importance weighting shifts the city-wide energy estimate.',
+                },
+              ].map(({ file, caption, description }) => (
                 <div key={file} className="overflow-hidden rounded-xl border border-slate-200 bg-white shadow-sm">
                   <img
                     src={`${backendBase}/results/images/${file}`}
@@ -673,7 +701,10 @@ export function GlobalModelAnalytics() {
                     className="w-full object-contain"
                     loading="lazy"
                   />
-                  <p className="px-3 py-2 text-center text-xs font-medium text-slate-600">{caption}</p>
+                  <div className="px-3 py-3 border-t border-slate-100">
+                    <p className="text-center text-xs font-semibold text-slate-700">{caption}</p>
+                    <p className="mt-1 text-center text-xs text-slate-500 leading-relaxed">{description}</p>
+                  </div>
                 </div>
               ))}
             </div>
