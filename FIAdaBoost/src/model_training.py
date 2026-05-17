@@ -849,26 +849,30 @@ def plot_residuals(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
 
 
 def plot_metrics_comparison(ada_m: dict, fi_m: dict):
-    metrics  = ["RMSE_J", "MAE_J", "R2"]
-    labels   = ["RMSE (J/m²/day)", "MAE (J/m²/day)", "R²"]
-    ada_vals = [ada_m[k] for k in metrics]
-    fi_vals  = [fi_m[k]  for k in metrics]
-    fig, axes = plt.subplots(1, 3, figsize=(14, 5))
-    for ax, label, av, fv in zip(axes, labels, ada_vals, fi_vals):
-        bars = ax.bar(["AdaBoost\n(Baseline)", "FI-AdaBoost\n(Proposed)"], [av, fv],
-                      color=[C_ADA, C_FI], edgecolor="black", alpha=0.85, width=0.5)
-        for bar, val in zip(bars, [av, fv]):
-            ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
-                    f"{val:,.2f}", ha="center", va="bottom", fontsize=10, fontweight="bold")
-        ax.set_title(label, fontsize=12, fontweight="bold")
-        ax.set_ylim(0, max(av, fv) * 1.18)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-    plt.suptitle("Model Performance Comparison — Same Target & Features",
-                 fontsize=13, fontweight="bold")
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "metrics_comparison.png"), dpi=300, bbox_inches="tight")
-    plt.close()
+   metrics  = ["RMSE_J", "MAE_J", "R2"]
+   labels   = ["RMSE (J/m²/day)", "MAE (J/m²/day)", "R²"]
+   ada_vals = [ada_m[k] for k in metrics]
+   fi_vals  = [fi_m[k]  for k in metrics]
+   fig, axes = plt.subplots(1, 3, figsize=(14, 5))
+   for ax, label, key, av, fv in zip(axes, labels, metrics, ada_vals, fi_vals):
+       bars = ax.bar(["AdaBoost\n(Baseline)", "FI-AdaBoost\n(Proposed)"], [av, fv],
+                     color=[C_ADA, C_FI], edgecolor="black", alpha=0.85, width=0.5)
+       for bar, val in zip(bars, [av, fv]):
+           fmt = f"{val:.6f}" if key == "R2" else f"{val:,.2f}"
+           ax.text(bar.get_x() + bar.get_width() / 2, bar.get_height() * 1.01,
+                   fmt, ha="center", va="bottom", fontsize=10, fontweight="bold")
+       ax.set_title(label, fontsize=12, fontweight="bold")
+       ax.set_ylim(0, max(av, fv) * 1.18)
+       ax.spines["top"].set_visible(False)
+       ax.spines["right"].set_visible(False)
+   plt.suptitle("Model Performance Comparison — Same Target & Features",
+                fontsize=13, fontweight="bold")
+   plt.tight_layout()
+   plt.savefig(os.path.join(RESULTS_DIR, "metrics_comparison.png"), dpi=300, bbox_inches="tight")
+   plt.close()
+
+
+
 
 
 def plot_energy_distribution(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame):
