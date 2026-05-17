@@ -1,2 +1,2 @@
 DM_statistic,p_value,significant_at_0.05,interpretation,n_test_samples,mean_loss_diff_J2
--1.5401,0.123548,False,No statistically significant difference at α=0.05,74,-42075456882.51
+-1.6083,0.10776,False,No statistically significant difference at α=0.05,74,-45591599735.86
