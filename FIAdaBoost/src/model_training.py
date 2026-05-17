@@ -177,7 +177,7 @@ def _ensure_spatial_columns(df: pd.DataFrame) -> tuple[pd.DataFrame, bool]:
 
 
 # =============================================================================
-# DATA LOADING — SPATIAL DATASET (10,000 points)
+# DATA LOADING — SPATIAL DATASET (3,000 points)
 # =============================================================================
 def load_dataset() -> pd.DataFrame:
     """
