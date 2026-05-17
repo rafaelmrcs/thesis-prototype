@@ -9,7 +9,7 @@ from sklearn.tree import DecisionTreeRegressor
 
 RANDOM_SEED = 42
 KWH_TO_J = 3_600_000
-TARGET_COL = "Target_eff_J"
+TARGET_COL = "effective_GHI_J"
 
 SHARED_FEATURES = [
     "lat",
@@ -21,6 +21,8 @@ SHARED_FEATURES = [
     "clear_sky_ratio",
     "sunshine_hours",
 ]
+
+BASELINE_FEATURES = SHARED_FEATURES
 
 # Learned SEI normalization reference from the training rooftop feature set.
 DEFAULT_SEI_NORMALIZER = 5368.320870273783
@@ -114,13 +116,13 @@ class FIAdaBoostRegressor:
                 break
 
             norm_error = abs_error / max_error
-            eps_t = float(np.dot(weights, norm_error))
+            phi = self._norm_fi(tree)
+            phi_i = self._composite_phi(X_arr, phi)
+            eps_t = float(np.dot(weights, norm_error * phi_i))
             if eps_t >= 0.5:
                 break
 
             beta_t = eps_t / (1.0 - eps_t + 1e-10)
-            phi = self._norm_fi(tree)
-            phi_i = self._composite_phi(X_arr, phi)
 
             new_weights = weights * (beta_t ** (1.0 - norm_error * phi_i))
             z_t = new_weights.sum()
@@ -146,9 +148,16 @@ class FIAdaBoostRegressor:
 
     def predict(self, X):
         X_arr = X.to_numpy() if hasattr(X, "to_numpy") else np.asarray(X)
-        predictions = np.array([est.predict(X_arr) for est in self.estimators_])
+        preds_list = [est.predict(X_arr) for est in self.estimators_]
+        if not preds_list:
+            return np.zeros(X_arr.shape[0])
+        predictions = np.vstack(preds_list)
         weights = np.asarray(self.estimator_weights_, dtype=float)
-        weights = weights / weights.sum()
+        weight_sum = weights.sum()
+        if weight_sum <= 0:
+            weights = np.full(len(weights), 1.0 / len(weights))
+        else:
+            weights = weights / weight_sum
 
         result = np.zeros(X_arr.shape[0])
         for row_idx in range(X_arr.shape[0]):
