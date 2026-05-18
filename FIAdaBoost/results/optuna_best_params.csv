@@ -1,0 +1,3 @@
+model,n_estimators,learning_rate,max_depth
+AdaBoost (Baseline),158,0.55,3
+FI-AdaBoost (Proposed),141,0.63,4
