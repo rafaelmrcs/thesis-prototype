@@ -774,7 +774,7 @@ def plot_standalone_feature_importance(fi_vals, feats):
     bars       = plt.barh(sl, sv, color=C_FI, edgecolor="black", alpha=0.85)
     for bar, val in zip(bars, sv):
         plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
+                 f"{val * 100:.8f}%", va="center", ha="left", fontsize=10, fontweight="bold")
     plt.title("FI-AdaBoost Feature Importance", fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
     plt.xlim(0, max(sv) + 0.1)
@@ -974,6 +974,11 @@ def main():
     fi_params = _tune_kfold(FIAdaBoostRegressor, _fi_space, X_tr_fi, y_tr)
     print(f"  Best FI-AdaBoost params: {fi_params}")
 
+    pd.DataFrame([
+        {"model": "AdaBoost (Baseline)",    **ada_params},
+        {"model": "FI-AdaBoost (Proposed)", **fi_params},
+    ]).to_csv(os.path.join(RESULTS_DIR, "optuna_best_params.csv"), index=False)
+
     # ── [4] KFold CV metrics (Fix 4) ───────────────────────────────────────────
     print("\n[4/6] KFold CV Metrics …")
     cv_df = run_kfold_cv(X_tr_ada, X_tr_fi, y_tr, ada_params, fi_params)
@@ -1020,7 +1025,7 @@ def main():
     print("\n  FI-AdaBoost Feature Importances (Fix 6 — raw, no log transform):")
     for feat, imp in sorted(zip(SHARED_FEATURES, fi.feature_importances_),
                             key=lambda x: -x[1]):
-        print(f"    {feat:<25}: {imp * 100:.4f}%")
+        print(f"    {feat:<25}: {imp * 100:.8f}%")
 
     t = make_result_table(ada_test_m, fi_test_m)
     _print_table("Phase 1: ML Validation (same target + same features)", t)
@@ -1056,6 +1061,7 @@ def main():
 
     saved = [
         ("CSV",   os.path.join(RESULTS_DIR, "train_test_split_info.csv")),
+        ("CSV",   os.path.join(RESULTS_DIR, "optuna_best_params.csv")),
         ("CSV",   p_metrics),
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
