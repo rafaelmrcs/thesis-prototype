@@ -3,9 +3,8 @@ import { ForecastingTool } from './components/ForecastingTool';
 import { ModelAnalytics } from './components/ModelAnalytics';
 import { GlobalModelAnalytics } from './components/GlobalModelAnalytics';
 import { Help } from './components/Help';
-import { Feedback } from './components/Feedback';
 import { Tabs, TabsContent, TabsList, TabsTrigger } from './components/ui/tabs';
-import { Sun, BarChart3, FlaskConical, HelpCircle, MessageSquare } from 'lucide-react';
+import { Sun, BarChart3, FlaskConical, HelpCircle } from 'lucide-react';
 
 export default function App() {
   const [selectedCoordinates, setSelectedCoordinates] = useState({ lat: 7.0731, lng: 125.6128 });
@@ -42,7 +41,7 @@ export default function App() {
       <main className="max-w-7xl mx-auto px-4 py-8">
         <Tabs defaultValue="forecasting" className="w-full">
           <div className="overflow-x-auto -mx-4 px-4 sm:mx-0 sm:px-0 pb-1 sm:pb-0 mb-8">
-            <TabsList className="flex w-max sm:grid sm:w-full sm:max-w-4xl sm:mx-auto sm:grid-cols-5 h-12 p-1 bg-white shadow-md border border-gray-200">
+            <TabsList className="flex w-max sm:grid sm:w-full sm:max-w-4xl sm:mx-auto sm:grid-cols-4 h-12 p-1 bg-white shadow-md border border-gray-200">
               <TabsTrigger
                 value="forecasting"
                 className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-orange-500 data-[state=active]:to-amber-500 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
@@ -74,14 +73,7 @@ export default function App() {
                 <HelpCircle className="w-4 h-4 shrink-0" />
                 <span>Help</span>
               </TabsTrigger>
-              <TabsTrigger
-                value="feedback"
-                className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-              >
-                <MessageSquare className="w-4 h-4 shrink-0" />
-                <span>Feedback</span>
-              </TabsTrigger>
-            </TabsList>
+              </TabsList>
           </div>
           
           <TabsContent value="forecasting" className="mt-0">
@@ -102,9 +94,6 @@ export default function App() {
             <Help />
           </TabsContent>
 
-          <TabsContent value="feedback" className="mt-0">
-            <Feedback />
-          </TabsContent>
         </Tabs>
       </main>
 
