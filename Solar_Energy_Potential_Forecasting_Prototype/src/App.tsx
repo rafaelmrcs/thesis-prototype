@@ -78,14 +78,7 @@ export default function App() {
                <HelpCircle className="w-4 h-4 shrink-0" />
                <span>Help</span>
              </TabsTrigger>
-             <TabsTrigger
-               value="feedback"
-               className="min-w-[100px] sm:min-w-0 flex items-center gap-2 data-[state=active]:bg-gradient-to-r data-[state=active]:from-violet-500 data-[state=active]:to-fuchsia-600 data-[state=active]:text-white data-[state=active]:shadow-md transition-all"
-             >
-               <MessageSquare className="w-4 h-4 shrink-0" />
-               <span>Feedback</span>
-             </TabsTrigger>
-           </TabsList>
+            </TabsList>
          </div>
         
          <TabsContent value="forecasting" className="mt-0">
@@ -109,10 +102,7 @@ export default function App() {
          </TabsContent>
 
 
-         <TabsContent value="feedback" className="mt-0">
-           <Feedback />
-         </TabsContent>
-       </Tabs>
+        </Tabs>
      </main>
 
 
