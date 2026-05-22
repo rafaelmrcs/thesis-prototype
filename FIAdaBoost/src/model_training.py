@@ -920,8 +920,8 @@ def plot_overfit_check(ada_train_m, ada_test_m, fi_train_m, fi_test_m):
     width = 0.35
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    rects1 = ax.bar(x - width / 2, train_rmse, width, label="Train RMSE", color="#3498DB", edgecolor="black")
-    rects2 = ax.bar(x + width / 2, test_rmse,  width, label="Test RMSE",  color="#E74C3C", edgecolor="black")
+    rects1 = ax.bar(x - width / 2, train_rmse, width, label="Train RMSE", color=C_ADA, edgecolor="black", alpha=0.85)
+    rects2 = ax.bar(x + width / 2, test_rmse,  width, label="Test RMSE",  color=C_FI,  edgecolor="black", alpha=0.85)
 
     ax.set_ylabel("RMSE (J/m²/day)", fontsize=12)
     ax.set_title("Overfitting Check: Train vs Test Error\n(A massive gap indicates overfitting)",
