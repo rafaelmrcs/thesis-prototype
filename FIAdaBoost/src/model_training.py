@@ -106,8 +106,8 @@ DAILY_FEATURES = [
 DAILY_TARGET = "GHI_J"
 
 
-C_ADA = "#E74C3C"
-C_FI  = "#27AE60"
+C_ADA = "#3B82F6"
+C_FI  = "#F97316"
 
 
 # =============================================================================
@@ -229,6 +229,8 @@ class BaselineAdaBoost:
         return self._model.feature_importances_
 
 
+# Objective 1.2.2.2: To optimize the AdaBoost Regression algorithm using a
+# feature-importance-aware weighting mechanism for enhanced learning efficiency.
 class FIAdaBoostRegressor:
     def __init__(self, n_estimators=141, learning_rate=0.63, max_depth=4,
                  random_state=RANDOM_SEED):
@@ -329,6 +331,15 @@ class FIAdaBoostRegressor:
             mid   = np.searchsorted(cumw, 0.5)
             result[i] = p_i[order[min(mid, len(p_i) - 1)]]
         return result
+
+# FIAdaBoostRegressor works by running AdaBoost on decision-tree stumps, but at each
+# boosting round it computes a per-sample "feature-importance engagement score" (Phi_i)
+# from the current tree's Gini importances and the sample's scaled feature values.
+# This score modulates the per-sample loss so that samples which activate high-importance
+# features receive amplified weight updates, steering subsequent trees toward the
+# feature-rich, harder-to-predict regions of the input space.  Final prediction uses a
+# weighted median across all weak-learner outputs — more robust than a weighted mean when
+# individual trees are unreliable.
 
 
 # =============================================================================
@@ -768,6 +779,26 @@ def plot_standalone_feature_importance(fi_vals, feats):
     plt.close()
 
 
+def plot_standalone_baseline_feature_importance(ada_vals, feats):
+    plt.figure(figsize=(10, 6))
+    labels = [f.replace("_", " ").title() for f in feats]
+    idx    = np.argsort(ada_vals)
+    sv     = ada_vals[idx]
+    sl     = np.array(labels)[idx]
+    bars   = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
+    for bar, val in zip(bars, sv):
+        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
+                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
+    plt.title("Baseline AdaBoost Feature Importance", fontsize=14, fontweight="bold")
+    plt.xlabel("Relative Importance Weight", fontsize=12)
+    plt.xlim(0, max(sv) + 0.1)
+    plt.gca().spines["top"].set_visible(False)
+    plt.gca().spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "baseline_feature_importances.png"), dpi=300)
+    plt.close()
+
+
 def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
     fig, axes = plt.subplots(1, 2, figsize=(14, 6))
     for ax, y_true, y_pred, color, title in [
@@ -1004,6 +1035,10 @@ def main():
     # Diebold–Mariano test (Fix 5)
     dm = diebold_mariano_test(y_te - ada_te, y_te - fi_te)
 
+    print("\n  Baseline AdaBoost Feature Importances:")
+    for feat, imp in sorted(zip(SHARED_FEATURES, ada.feature_importances_), key=lambda x: -x[1]):
+        print(f"    {feat:<25}: {imp * 100:.4f}%")
+
     print("\n  FI-AdaBoost Feature Importances (Fix 6 — raw, no log transform):")
     for feat, imp in sorted(zip(SHARED_FEATURES, fi.feature_importances_),
                             key=lambda x: -x[1]):
@@ -1033,6 +1068,7 @@ def main():
     p_forecast = save_forecast_csv(ada_fcast, fi_fcast)
     p_dm       = save_dm_results(dm, suffix="spatial")
 
+    plot_standalone_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
@@ -1046,6 +1082,7 @@ def main():
         ("CSV",   p_metrics),
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
+        ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
