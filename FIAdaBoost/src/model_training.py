@@ -870,7 +870,7 @@ def plot_standalone_baseline_feature_importance(ada_vals, feats):
     for bar, val in zip(bars, sv):
         plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
                  f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("Baseline AdaBoost Feature Importance", fontsize=14, fontweight="bold")
+    plt.title("Baseline AdaBoost Feature Importance\n(No Feature Weighting — Uniform)", fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
     plt.xlim(0, max(sv) + 0.1)
     plt.gca().spines["top"].set_visible(False)
@@ -1153,7 +1153,8 @@ def main():
     p_forecast = save_forecast_csv(ada_fcast, fi_fcast)
     p_dm       = save_dm_results(dm, suffix="spatial")
 
-    plot_standalone_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
+    uniform_imp = np.ones(len(SHARED_FEATURES)) / len(SHARED_FEATURES)
+    plot_standalone_baseline_feature_importance(uniform_imp, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
