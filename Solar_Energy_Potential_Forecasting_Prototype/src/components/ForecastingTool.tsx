@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MapPin, Locate, Sun, Home, Compass, Cloud, Droplets, Thermometer, Navigation, Search } from 'lucide-react';
+import { MapPin, Locate, Sun, Home, Compass, Cloud, Droplets, Thermometer, Navigation, Search, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -121,6 +121,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [showGuide, setShowGuide] = useState(true);
   const latValue = Number(coordinates.lat);
   const lngValue = Number(coordinates.lng);
   const hasValidCoordinates = Number.isFinite(latValue) && Number.isFinite(lngValue);
@@ -448,6 +449,67 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             </div>
           )}
         </CardContent>
+      </Card>
+
+      {/* How to Use Guide */}
+      <Card className="border-2 border-amber-200 bg-amber-50 shadow-md">
+        <CardHeader className="pb-2">
+          <div className="flex items-center justify-between">
+            <CardTitle className="flex items-center gap-2 text-base">
+              <BookOpen className="w-4 h-4 text-amber-600" />
+              How to Use This Tool
+            </CardTitle>
+            <button
+              onClick={() => setShowGuide((v) => !v)}
+              className="flex items-center gap-1 text-xs text-amber-700 hover:text-amber-900 font-medium"
+            >
+              {showGuide ? <><ChevronUp className="w-4 h-4" /> Hide guide</> : <><ChevronDown className="w-4 h-4" /> Show guide</>}
+            </button>
+          </div>
+        </CardHeader>
+        {showGuide && (
+          <CardContent className="space-y-5 text-sm text-gray-700 pt-0">
+            {/* A. Pinning a Location */}
+            <div>
+              <p className="font-semibold text-gray-800 mb-1">A. Pinning a Location</p>
+              <ul className="space-y-1 list-disc list-inside text-xs text-gray-600">
+                <li>Search an address — results are filtered to Davao City bounds.</li>
+                <li>Type decimal coordinates in <span className="font-mono bg-amber-100 px-1 rounded">lat, lng</span> format (e.g. <span className="font-mono bg-amber-100 px-1 rounded">7.0731, 125.6128</span>) and press Enter.</li>
+                <li>Click anywhere on the map to drop the pin at that exact point.</li>
+              </ul>
+            </div>
+
+            {/* B. What the Prediction Shows */}
+            <div>
+              <p className="font-semibold text-gray-800 mb-2">B. What the Prediction Shows</p>
+              <div className="space-y-2 text-xs">
+                {[
+                  ['Solar Energy Potential (SEP)', 'Predicted irradiance × detected rooftop area in kWh/day. Theoretical incident solar energy — not usable electricity output.'],
+                  ['Irradiance Resource Level', 'Predicted GHI expressed as % of the 7 kWh/m²/day practical maximum. Excellent ≥ 5.5 · Very Good ≥ 4.5 · Good ≥ 3.5 · Fair < 3.5 kWh/m²/day.'],
+                  ['Solar Exposure Index (SEI)', 'Composite 0–1 score derived from rooftop area, orientation, and local clearness. Used directly as a training feature.'],
+                  ['Azimuth', 'Compass bearing of the building\'s longest edge. 0° = North, 90° = East, 180° = South, 270° = West.'],
+                  ['Clear-Sky Ratio', 'Actual GHI ÷ pvlib Ineichen theoretical clear-sky GHI. Values near 1.0 indicate mostly clear conditions year-round.'],
+                ].map(([term, def]) => (
+                  <div key={term} className="grid grid-cols-[180px_1fr] gap-2 rounded-lg border border-amber-200 bg-white p-2">
+                    <span className="font-medium text-gray-800">{term}</span>
+                    <span className="text-gray-600">{def}</span>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            {/* C. Scope & Assumptions */}
+            <div className="rounded-xl border border-amber-300 bg-amber-100 p-3 text-xs text-amber-900 space-y-1">
+              <p className="font-semibold uppercase tracking-wide">Scope &amp; Assumptions</p>
+              <ul className="list-disc list-inside space-y-0.5">
+                <li>Whole rooftop area is assumed available — no panel layout is modelled.</li>
+                <li>Panel efficiency, inverter losses, and performance ratio are excluded.</li>
+                <li>Prediction uses the nearest OpenStreetMap building polygon; accuracy depends on OSM coverage quality.</li>
+                <li>Locations far from central Davao City will return lower prediction confidence scores.</li>
+              </ul>
+            </div>
+          </CardContent>
+        )}
       </Card>
 
       {/* Results Section */}
