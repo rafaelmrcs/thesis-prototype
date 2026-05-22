@@ -340,7 +340,7 @@ export function GlobalModelAnalytics() {
                        <YAxis stroke="#64748b" />
                        <Tooltip formatter={(v: number | string) => formatExact(Number(v), 6)} />
                        <Legend />
-                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#94a3b8" radius={[8, 8, 0, 0]} />
+                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]} />
                        <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
                      </BarChart>
                    </ResponsiveContainer>
@@ -360,7 +360,7 @@ export function GlobalModelAnalytics() {
                        />
                        <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
                        <Legend />
-                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#94a3b8" radius={[8, 8, 0, 0]} />
+                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]} />
                        <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
                      </BarChart>
                    </ResponsiveContainer>
@@ -456,87 +456,6 @@ export function GlobalModelAnalytics() {
              }
            />
          )}
-       </CardContent>
-     </Card>
-
-
-     {/* ── SECTION 4: Visual Analysis ───────────────────────────────────────── */}
-     <Card className="border-2 border-sky-200 bg-gradient-to-br from-sky-50 via-cyan-50 to-teal-50 shadow-xl">
-       <CardHeader>
-         <CardTitle className="text-2xl">Visual Analysis</CardTitle>
-         <CardDescription>
-           Predicted vs Actual scatter and error distribution histogram.
-         </CardDescription>
-       </CardHeader>
-       <CardContent className="space-y-10">
-         {/* A. Predicted vs Actual */}
-         {/* <section>
-           <h3 className="mb-1 text-lg font-semibold">A. Predicted vs Actual</h3>
-           <p className="mb-4 text-sm text-slate-500">
-             Points on — or close to — the dashed diagonal indicate accurate predictions.
-           </p>
-           {trainingAnalytics ? (
-             <div className="grid grid-cols-1 gap-6 xl:grid-cols-2">
-               <ScatterPanel
-                 title="Baseline AdaBoost"
-                 data={trainingAnalytics.predictedVsActual.baseline}
-                 color="#94a3b8"
-                 domainMin={trainingAnalytics.predictedVsActual.domainMin}
-                 domainMax={trainingAnalytics.predictedVsActual.domainMax}
-               />
-               <ScatterPanel
-                 title="FI-AdaBoost"
-                 data={trainingAnalytics.predictedVsActual.fiAdaBoost}
-                 color="#f97316"
-                 domainMin={trainingAnalytics.predictedVsActual.domainMin}
-                 domainMax={trainingAnalytics.predictedVsActual.domainMax}
-               />
-             </div>
-           ) : (
-             <EmptyState
-               message={loading ? 'Loading scatter plots…' : error ?? 'Training analytics unavailable.'}
-             />
-           )}
-         </section> */}
-
-
-         {/* B. Error distribution */}
-         <section>
-           <h3 className="mb-1 text-lg font-semibold">B. Error Distribution</h3>
-           <p className="mb-4 text-sm text-slate-500">
-             Residual histogram — FI-AdaBoost should show a tighter spread around zero.
-           </p>
-           {trainingAnalytics ? (
-             <>
-               <ResponsiveContainer width="100%" height={320}>
-                 <BarChart data={trainingAnalytics.errorDistribution} barCategoryGap="10%">
-                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                   <XAxis dataKey="bucket" stroke="#64748b" interval={2} angle={-25} textAnchor="end" height={70} />
-                   <YAxis stroke="#64748b" />
-                   <Tooltip />
-                   <Legend />
-                   <Bar dataKey="baseline" name="Baseline residual count" fill="#94a3b8" radius={[5, 5, 0, 0]} />
-                   <Bar dataKey="fiAdaBoost" name="FI-AdaBoost residual count" fill="#f97316" radius={[5, 5, 0, 0]} />
-                 </BarChart>
-               </ResponsiveContainer>
-               {residualNote && (
-                 <div className="mt-4 rounded-xl border border-sky-200 bg-white p-4 text-sm text-slate-700 shadow-sm">
-                   <p>{residualNote}</p>
-                   <p className="mt-2 text-xs text-slate-500">
-                     Residual std — Baseline: {trainingAnalytics.residualSummary.baselineStd.toFixed(2)},
-                     FI-AdaBoost: {trainingAnalytics.residualSummary.fiStd.toFixed(2)}.
-                   </p>
-                 </div>
-               )}
-             </>
-           ) : (
-             <EmptyState
-               message={loading ? 'Loading error distribution…' : error ?? 'Training analytics unavailable.'}
-             />
-           )}
-         </section>
-
-
        </CardContent>
      </Card>
 
@@ -723,9 +642,14 @@ export function GlobalModelAnalytics() {
                  description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
                },
                {
+                 file: 'baseline_feature_importances.png',
+                 caption: 'Baseline AdaBoost Feature Importances',
+                 description: 'Gini-based feature importance from the baseline AdaBoost ensemble. Shows which of the 8 input features the standard boosting algorithm relied on most heavily.',
+               },
+               {
                  file: 'standalone_feature_importances.png',
-                 caption: 'Feature Importances',
-                 description: 'Weighted feature importance from FI-AdaBoost weak learners. Higher bars contributed more to the boosting decisions; features on the right drive the most prediction variance.',
+                 caption: 'FI-AdaBoost Feature Importances',
+                 description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
                },
                {
                  file: 'energy_distribution.png',

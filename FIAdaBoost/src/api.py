@@ -1007,22 +1007,39 @@ class ModelContext:
                 self.training_analytics_error = str(exc)
                 self.training_analytics = None
 
-    def confidence_level(self, lat: float, lng: float, diff_kwh: float) -> float:
+    def confidence_scores(
+        self, lat: float, lng: float, diff_kwh: float
+    ) -> tuple[float, float]:
+        """
+        Returns (baseline_confidence, fi_confidence).
+
+        baseline_confidence — purely spatial: how well the location is covered by
+        training data (proximity to nearest known point). The baseline model has no
+        comparison partner, so spatial coverage is its only reliability signal.
+
+        fi_confidence — spatial (70%) + model agreement (30%): FI-AdaBoost is an
+        optimisation over the baseline, so its confidence is partly validated by how
+        closely it agrees with the reference model. A large divergence lowers confidence.
+        """
         self.ensure_location_index_loaded()
 
+        # agreement_score: penalises large irradiance differences between the two models
         agreement_score = float(np.clip(100.0 - abs(diff_kwh) * 20.0, 35.0, 99.0))
+
         if self._kd_tree is not None and self.location_points is not None:
             distance_deg, _ = self._kd_tree.query([lat, lng])
             distance_km = float(distance_deg) * 111.0
             coverage_score = float(np.clip(100.0 - distance_km * 2.5, 35.0, 99.0))
-            return float(np.clip(0.7 * coverage_score + 0.3 * agreement_score, 35.0, 99.0))
+        else:
+            in_bounds = (
+                self.lat_range[0] <= lat <= self.lat_range[1]
+                and self.lon_range[0] <= lng <= self.lon_range[1]
+            )
+            coverage_score = 82.0 if in_bounds else 55.0
 
-        in_bounds = (
-            self.lat_range[0] <= lat <= self.lat_range[1]
-            and self.lon_range[0] <= lng <= self.lon_range[1]
-        )
-        coverage_score = 82.0 if in_bounds else 55.0
-        return float(np.clip(0.7 * coverage_score + 0.3 * agreement_score, 35.0, 99.0))
+        baseline_confidence = float(np.clip(coverage_score, 35.0, 99.0))
+        fi_confidence = float(np.clip(0.7 * coverage_score + 0.3 * agreement_score, 35.0, 99.0))
+        return baseline_confidence, fi_confidence
 
 
 ctx = ModelContext()
@@ -1132,7 +1149,9 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
             if baseline_result.solarPotential != 0
             else 0.0
         )
-        confidence = ctx.confidence_level(payload.lat, payload.lng, irradiance_diff_kwh_m2)
+        baseline_confidence, fi_confidence = ctx.confidence_scores(
+            payload.lat, payload.lng, irradiance_diff_kwh_m2
+        )
 
         baseline_metrics = ctx.performance_metrics.get(
             "baseline",
@@ -1150,7 +1169,8 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
                 "solarPotentialDiff": float(diff_kwh),
                 "solarPotentialImprovementPct": float(improvement_pct),
                 "accuracyGain": float(abs(diff_kwh)),
-                "confidenceLevel": confidence,
+                "baselineConfidenceLevel": baseline_confidence,
+                "fiConfidenceLevel": fi_confidence,
             },
             performanceMetricsComparison={
                 "baseline": baseline_metrics,

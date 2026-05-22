@@ -30,7 +30,8 @@ interface ComparisonData {
   improvement: {
     solarPotentialDiff: number;
     solarPotentialImprovementPct: number;
-    confidenceLevel: number;
+    baselineConfidenceLevel: number;
+    fiConfidenceLevel: number;
   };
   performanceMetricsComparison?: {
     baseline: { rmse: number; mae: number; r2: number };
@@ -142,36 +143,26 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                 </div>
               </div>
 
-              <div className="rounded-xl border border-sky-200 bg-white p-4 shadow-sm">
-                <p className="text-xs text-slate-500 uppercase tracking-wide">Prediction Confidence</p>
-                <p className="mt-1 text-3xl font-semibold text-sky-700">
-                  {formatPercent(liveComparison.improvement.confidenceLevel, 1)}
-                </p>
-                <p className="text-xs text-slate-400">Based on proximity to training data and model agreement</p>
-              </div>
-
-              {liveComparison.performanceMetricsComparison && (
-                <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-                  <p className="text-xs text-slate-500 uppercase tracking-wide">Saved Test Metrics (from results/metrics_summary.csv)</p>
-                  <div className="mt-3 grid grid-cols-1 gap-3 md:grid-cols-3">
-                    <div>
-                      <p className="text-xs text-slate-500">RMSE (J/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.baseline.rmse)}</p>
-                      <p className="text-sm text-orange-600">FI: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.fiAdaBoost.rmse)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">MAE (J/m²/day)</p>
-                      <p className="text-sm text-slate-700">Baseline: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.baseline.mae)}</p>
-                      <p className="text-sm text-orange-600">FI: {formatResultsErrorMetric(liveComparison.performanceMetricsComparison.fiAdaBoost.mae)}</p>
-                    </div>
-                    <div>
-                      <p className="text-xs text-slate-500">R²</p>
-                      <p className="text-sm text-slate-700">Baseline: {formatRawR2(liveComparison.performanceMetricsComparison.baseline.r2)}</p>
-                      <p className="text-sm text-orange-600">FI: {formatRawR2(liveComparison.performanceMetricsComparison.fiAdaBoost.r2)}</p>
-                    </div>
-                  </div>
+              <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
+                <div className="rounded-xl border border-blue-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">Baseline Prediction Confidence</p>
+                  <p className="mt-1 text-3xl font-semibold text-blue-600">
+                    {formatPercent(liveComparison.improvement.baselineConfidenceLevel, 1)}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                    Based purely on <span className="font-medium text-slate-600">spatial proximity</span> — how close the selected pin is to the nearest known rooftop point in the training dataset. The baseline model is the reference, so its confidence has no comparison partner; it reflects only how well the location is represented by training data.
+                  </p>
                 </div>
-              )}
+                <div className="rounded-xl border border-orange-200 bg-white p-4 shadow-sm">
+                  <p className="text-xs text-slate-500 uppercase tracking-wide">FI-AdaBoost Prediction Confidence</p>
+                  <p className="mt-1 text-3xl font-semibold text-orange-500">
+                    {formatPercent(liveComparison.improvement.fiConfidenceLevel, 1)}
+                  </p>
+                  <p className="mt-2 text-xs text-slate-500 leading-relaxed">
+                    Combines <span className="font-medium text-slate-600">spatial proximity</span> (70%) and <span className="font-medium text-slate-600">model agreement</span> (30%). Since FI-AdaBoost is an optimisation over the baseline, its confidence is partly validated by how closely it agrees with the reference — a large divergence in predicted irradiance lowers this score.
+                  </p>
+                </div>
+              </div>
             </>
           ) : (
             <div className="rounded-xl border border-dashed border-slate-300 bg-white/70 p-6 text-sm text-slate-500">
