@@ -11,6 +11,9 @@ import {
   GitBranch,
   Zap,
   Target,
+  Cpu,
+  TrendingUp,
+  AlertTriangle,
 } from 'lucide-react';
 
 export function Help() {
@@ -107,6 +110,31 @@ export function Help() {
         </CardContent>
       </Card>
 
+      {/* How FI-AdaBoost differs */}
+      <Card className="border-2 border-violet-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <Cpu className="w-5 h-5 text-violet-600" />
+            How FI-AdaBoost Differs from Baseline AdaBoost
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm text-gray-700 leading-relaxed">
+          <p>
+            Standard AdaBoost reweights training samples at each boosting round based solely on prediction error — samples with large errors receive higher weight so subsequent trees focus on them. This treats all features as equally informative when deciding where to concentrate learning.
+          </p>
+          <p>
+            FI-AdaBoost adds a <strong>feature-engagement score Φᵢ</strong> (Phi sub-i) at each round. After the current tree is fitted, its normalised Gini importances (summing to 1) are used as weights over the features. For each sample, Φᵢ is the weighted sum of its scaled absolute feature values — a score in [0, 1] reflecting how strongly that sample activates the features the current tree found important.
+          </p>
+          <div className="rounded-xl border border-slate-200 bg-slate-50 p-3 font-mono text-xs text-slate-700 space-y-1">
+            <p>Φᵢ  = Σⱼ φⱼ · |xᵢⱼ_scaled|   (per-sample engagement score)</p>
+            <p>lossᵢ = errorᵢ × Φᵢ            (feature-importance-modulated loss)</p>
+          </div>
+          <p>
+            This modulated loss drives both the error rate εₜ and the sample weight update, steering subsequent trees toward hard-to-predict samples in <em>feature-important regions</em> of the input space — not just anywhere the error is large. Final prediction aggregates all weak-learner outputs using a <strong>weighted median</strong> (not mean), which is more robust to outlier trees.
+          </p>
+        </CardContent>
+      </Card>
+
       {/* Prediction Pipeline */}
       <Card className="border-2 border-green-200 shadow-md">
         <CardHeader>
@@ -165,13 +193,55 @@ export function Help() {
           </div>
           <div className="space-y-3">
             <p className="font-semibold text-gray-800">Prediction Confidence (35–99%)</p>
-            <p className="text-xs text-gray-600">Blended from two signals — both clipped to [35, 99]:</p>
-            <ul className="space-y-2 text-xs text-gray-600 list-disc list-inside">
-              <li><strong>Coverage:</strong> distance from pin to nearest training point (kd-tree) → <code className="bg-slate-100 px-1 rounded">100 − dist_km × 2.5</code></li>
-              <li><strong>Agreement:</strong> model disagreement penalty → <code className="bg-slate-100 px-1 rounded">100 − |Baseline − FI| × 20</code></li>
-              <li><strong>Final:</strong> <code className="bg-slate-100 px-1 rounded">0.7 × coverage + 0.3 × agreement</code></li>
-            </ul>
-            <p className="text-xs text-gray-500 italic">Confidence drops when the pin is far from any training point or when the two models strongly disagree.</p>
+            <p className="text-xs text-gray-600">Two separate scores — one per model — both clipped to [35, 99]:</p>
+            <div className="rounded-lg border border-blue-200 bg-blue-50 p-2.5 space-y-1 text-xs">
+              <p className="font-semibold text-blue-800">Baseline — spatial proximity only</p>
+              <p className="font-mono text-blue-700">coverage = 100 − dist_km × 2.5</p>
+              <p className="text-blue-700">Baseline is the reference; its confidence reflects only how well the location is covered by training data.</p>
+            </div>
+            <div className="rounded-lg border border-orange-200 bg-orange-50 p-2.5 space-y-1 text-xs">
+              <p className="font-semibold text-orange-800">FI-AdaBoost — spatial + model agreement</p>
+              <p className="font-mono text-orange-700">agreement = 100 − |Δirradiance| × 20</p>
+              <p className="font-mono text-orange-700">FI confidence = 0.7 × coverage + 0.3 × agreement</p>
+              <p className="text-orange-700">Penalised when it diverges strongly from the baseline — a large irradiance gap lowers this score.</p>
+            </div>
+          </div>
+        </CardContent>
+      </Card>
+
+      {/* Interpreting the results */}
+      <Card className="border-2 border-teal-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <TrendingUp className="w-5 h-5 text-teal-600" />
+            Interpreting the Results
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="space-y-4 text-sm text-gray-700 leading-relaxed">
+          <div className="space-y-3">
+            {[
+              {
+                label: '30.7% RMSE reduction (Experiment 1)',
+                detail: "FI-AdaBoost's typical irradiance error is ~1,495 J/m²/day smaller than the baseline. Because SEP = irradiance × rooftop area, this directly improves solar energy potential estimates — a building with 100 m² rooftop would see its daily SEP estimate carry ~0.415 kWh/day (~152 kWh/year) less error.",
+              },
+              {
+                label: 'DM statistic = 14.74 (p < 0.001) — Spatial domain',
+                detail: 'Extremely strong statistical evidence that the accuracy difference is real, not sampling noise. At n ≈ 3,000, the critical value at α = 0.05 is well below 14.74 — the result would survive even very conservative corrections for multiple testing.',
+              },
+              {
+                label: 'Daily DM = −1.54 (p = 0.124) — Temporal domain',
+                detail: "No statistically significant difference on the 365-point daily time series. Both models have similar accuracy on temporal variation — FI-AdaBoost's advantage is specific to the spatial variation task (predicting across different buildings and locations), not to temporal forecasting.",
+              },
+              {
+                label: 'R² close to 1.0',
+                detail: 'The model explains nearly all variance in irradiance across buildings. The remaining gap is attributed to unmodelled factors: micro-climate variation below NASA POWER resolution, local shading not captured in OSM, and rooftop surface properties.',
+              },
+            ].map(({ label, detail }) => (
+              <div key={label} className="rounded-xl border border-slate-200 bg-white p-3 shadow-sm">
+                <p className="font-semibold text-gray-800 text-xs uppercase tracking-wide mb-1">{label}</p>
+                <p className="text-xs text-gray-600 leading-relaxed">{detail}</p>
+              </div>
+            ))}
           </div>
         </CardContent>
       </Card>
@@ -231,13 +301,7 @@ export function Help() {
               icon: <BarChart3 className="w-5 h-5 text-white" />,
               gradient: 'from-emerald-500 to-teal-600',
               tab: 'Model Analysis',
-              desc: 'Training-wide performance metrics from the saved results files. Bar charts for RMSE, MAE, and R². Cross-validation fold table. Results shown here correspond to whichever branch (experiment) the backend was trained on.',
-            },
-            {
-              icon: <FlaskConical className="w-5 h-5 text-white" />,
-              gradient: 'from-violet-500 to-fuchsia-600',
-              tab: 'Global Analytics',
-              desc: 'City-wide solar energy potential summary across all 3,000 sampled buildings. Distribution charts, total annual SEP estimates, and per-building breakdowns comparing both models.',
+              desc: 'Training-wide performance metrics from the saved results files. Bar charts for RMSE, MAE, and R². 5-fold spatial CV table. Diebold-Mariano statistical test. Daily temporal split metrics. Research plots from the last training run. Results correspond to whichever branch (experiment) the backend was trained on.',
             },
           ].map(({ icon, gradient, tab, desc }) => (
             <div key={tab} className="flex gap-3 items-start rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
@@ -250,6 +314,26 @@ export function Help() {
               </div>
             </div>
           ))}
+        </CardContent>
+      </Card>
+
+      {/* Scope and Limitations */}
+      <Card className="border-2 border-rose-200 shadow-md">
+        <CardHeader>
+          <CardTitle className="flex items-center gap-2 text-xl">
+            <AlertTriangle className="w-5 h-5 text-rose-600" />
+            Scope and Limitations
+          </CardTitle>
+        </CardHeader>
+        <CardContent className="text-sm text-gray-700 leading-relaxed">
+          <ul className="space-y-2 list-disc list-inside text-xs text-gray-600">
+            <li><strong>No panel efficiency modelled</strong> — SEP represents incident solar energy on the rooftop surface, not usable electricity output. Actual PV yield requires multiplying by panel efficiency (~15–22%) and system performance ratio (~0.75–0.85).</li>
+            <li><strong>OSM completeness varies</strong> — Buildings not mapped in OpenStreetMap, or mapped with coarse polygon geometry, will produce less accurate rooftop area, azimuth, and shading estimates. Rural or newly developed areas of Davao City may be under-represented.</li>
+            <li><strong>NASA POWER resolution (~50 km)</strong> — The irradiance data does not capture local micro-climate effects such as urban heat islands, coastal sea-breeze patterns, or topographic shading from mountains near Davao Gulf.</li>
+            <li><strong>Davao City training domain only</strong> — The model was trained exclusively on coordinates within Davao City. Predictions for locations outside this area are extrapolations; the confidence score will be low but the model may still run without error.</li>
+            <li><strong>Rooftop obstructions excluded</strong> — HVAC units, water tanks, parapet walls, and self-shading from adjacent taller buildings are not captured in OSM building footprints and are not accounted for in the SEP estimate.</li>
+            <li><strong>Static annual average</strong> — The model predicts an annual average irradiance. Seasonal variation (wet season vs. dry season in Mindanao) is not decomposed in the single SEP output.</li>
+          </ul>
         </CardContent>
       </Card>
 
