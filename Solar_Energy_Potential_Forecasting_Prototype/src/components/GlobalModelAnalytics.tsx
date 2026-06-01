@@ -90,26 +90,30 @@ interface CVMetricsData {
 
 
 interface SpatialCVFold {
- fold: number;
- baseline_train_rmse: number;
- baseline_val_rmse: number;
- baseline_train_r2: number;
- baseline_val_r2: number;
- fi_train_rmse: number;
- fi_val_rmse: number;
- fi_train_r2: number;
- fi_val_r2: number;
+	 fold: number;
+	 baseline_train_rmse: number;
+	 baseline_val_rmse: number;
+	 baseline_val_mae: number;
+	 baseline_train_r2: number;
+	 baseline_val_r2: number;
+	 fi_train_rmse: number;
+	 fi_val_rmse: number;
+	 fi_val_mae: number;
+	 fi_train_r2: number;
+	 fi_val_r2: number;
 }
 
 
 interface SpatialCVData {
  folds: SpatialCVFold[];
- average: {
-   baseline_val_rmse: number;
-   baseline_val_r2: number;
-   fi_val_rmse: number;
-   fi_val_r2: number;
- };
+	 average: {
+	   baseline_val_rmse: number;
+	   baseline_val_mae: number;
+	   baseline_val_r2: number;
+	   fi_val_rmse: number;
+	   fi_val_mae: number;
+	   fi_val_r2: number;
+	 };
 }
 
 
@@ -144,13 +148,28 @@ interface DailyMetricsData {
 
 
 interface SplitInfoData {
- total_samples: number;
- train_samples: number;
- test_samples: number;
- test_fraction: number;
- split_method: string;
- random_seed: number;
- target_col: string;
+	 total_samples: number;
+	 train_samples: number;
+	 test_samples: number;
+	 test_fraction: number;
+	 split_method: string;
+	 random_seed: number;
+	 target_col: string;
+}
+
+
+interface FeatureWeightRow {
+	 rank: number;
+	 feature: string;
+	 fi_feature_weight: number;
+	 fi_feature_weight_percent: number;
+	 source: string;
+}
+
+
+interface FeatureWeightsData {
+	 weights: FeatureWeightRow[];
+	 source_file: string;
 }
 
 
@@ -190,7 +209,14 @@ function formatGrouped(value: number, fractionDigits = 2): string {
 
 
 function formatR2Percent(value: number, fractionDigits = 4): string {
- return formatPercent(value * 100, fractionDigits);
+	 return formatPercent(value * 100, fractionDigits);
+}
+
+
+function formatFeatureName(value: string): string {
+	 return value
+	   .replace(/_/g, ' ')
+	   .replace(/\b\w/g, (char) => char.toUpperCase());
 }
 
 
@@ -201,12 +227,13 @@ export function GlobalModelAnalytics() {
  const [trainingAnalytics, setTrainingAnalytics] = useState<TrainingAnalyticsData | null>(null);
  const [cvMetrics, setCvMetrics] = useState<CVMetricsData | null>(null);
  const [spatialCv, setSpatialCv] = useState<SpatialCVData | null>(null);
- const [dmTest, setDmTest] = useState<DMTestData | null>(null);
- const [dailyMetrics, setDailyMetrics] = useState<DailyMetricsData | null>(null);
- const [splitInfo, setSplitInfo] = useState<SplitInfoData | null>(null);
- const [backendBase, setBackendBase] = useState<string>('');
- const [loading, setLoading] = useState(false);
- const [error, setError] = useState<string | null>(null);
+	 const [dmTest, setDmTest] = useState<DMTestData | null>(null);
+	 const [dailyMetrics, setDailyMetrics] = useState<DailyMetricsData | null>(null);
+	 const [splitInfo, setSplitInfo] = useState<SplitInfoData | null>(null);
+	 const [featureWeights, setFeatureWeights] = useState<FeatureWeightsData | null>(null);
+	 const [backendBase, setBackendBase] = useState<string>('');
+	 const [loading, setLoading] = useState(false);
+	 const [error, setError] = useState<string | null>(null);
 
 
  const fetchAll = async () => {
@@ -221,21 +248,23 @@ export function GlobalModelAnalytics() {
        fetchBackendJson<TrainingAnalyticsData>('/training-analytics'),
        fetchBackendJson<CVMetricsData>('/cv-metrics'),
        fetchBackendJson<SpatialCVData>('/cv-metrics/spatial'),
-       fetchBackendJson<DMTestData>('/dm-test'),
-       fetchBackendJson<DailyMetricsData>('/daily-metrics'),
-       fetchBackendJson<SplitInfoData>('/split-info'),
-     ]);
+	       fetchBackendJson<DMTestData>('/dm-test'),
+	       fetchBackendJson<DailyMetricsData>('/daily-metrics'),
+	       fetchBackendJson<SplitInfoData>('/split-info'),
+	       fetchBackendJson<FeatureWeightsData>('/feature-weights'),
+	     ]);
 
 
-     const [analyticsR, cvR, spatialCvR, dmTestR, dailyR, splitR] = settled;
+	     const [analyticsR, cvR, spatialCvR, dmTestR, dailyR, splitR, featureWeightsR] = settled;
 
 
      if (analyticsR.status === 'fulfilled') setTrainingAnalytics(analyticsR.value);
      if (cvR.status === 'fulfilled') setCvMetrics(cvR.value);
      if (spatialCvR.status === 'fulfilled') setSpatialCv(spatialCvR.value);
-     if (dmTestR.status === 'fulfilled') setDmTest(dmTestR.value);
-     if (dailyR.status === 'fulfilled') setDailyMetrics(dailyR.value);
-     if (splitR.status === 'fulfilled') setSplitInfo(splitR.value);
+	     if (dmTestR.status === 'fulfilled') setDmTest(dmTestR.value);
+	     if (dailyR.status === 'fulfilled') setDailyMetrics(dailyR.value);
+	     if (splitR.status === 'fulfilled') setSplitInfo(splitR.value);
+	     if (featureWeightsR.status === 'fulfilled') setFeatureWeights(featureWeightsR.value);
 
 
      const primaryFailed = analyticsR.status === 'rejected' && cvR.status === 'rejected';
@@ -277,11 +306,19 @@ export function GlobalModelAnalytics() {
    : [];
 
 
- const r2ChartData = mc
-   ? [
-       { metric: 'R²', baseline: mc.baseline.r2 * 100, fiAdaBoost: mc.fiAdaBoost.r2 * 100 },
-     ]
-   : [];
+	 const r2ChartData = mc
+	   ? [
+	       { metric: 'R²', baseline: mc.baseline.r2 * 100, fiAdaBoost: mc.fiAdaBoost.r2 * 100 },
+	     ]
+	   : [];
+
+
+	 const r2ValueSummary = mc
+	   ? [
+	       { label: 'Baseline AdaBoost', value: mc.baseline.r2, color: 'bg-blue-500' },
+	       { label: 'FI-AdaBoost', value: mc.fiAdaBoost.r2, color: 'bg-orange-500' },
+	     ]
+	   : [];
 
 
  const cvChartData =
@@ -289,9 +326,20 @@ export function GlobalModelAnalytics() {
      fold: `Fold ${m.fold}`,
      baselineRmse: m.baseline_rmse,
      fiRmse: m.fi_rmse,
-     baselineMae: m.baseline_mae,
-     fiMae: m.fi_mae,
-   })) ?? [];
+	     baselineMae: m.baseline_mae,
+	     fiMae: m.fi_mae,
+	   })) ?? [];
+
+
+	 const featureWeightChartData =
+	   featureWeights?.weights.map((item) => ({
+	     rank: item.rank,
+	     feature: formatFeatureName(item.feature),
+	     rawFeature: item.feature,
+	     weight: item.fi_feature_weight,
+	     percent: item.fi_feature_weight_percent,
+	     source: item.source,
+	   })) ?? [];
 
 
  const residualNote = trainingAnalytics
@@ -363,30 +411,35 @@ export function GlobalModelAnalytics() {
                      </BarChart>
                    </ResponsiveContainer>
                  </div>
-                 <div>
-                   <p className="mb-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
-                     R² Score (%) — higher is better
-                   </p>
-                   <ResponsiveContainer width="100%" height={280}>
-                     <BarChart data={r2ChartData} barCategoryGap="60%">
-                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-                       <XAxis dataKey="metric" stroke="#64748b" />
-                       <YAxis
-                         stroke="#64748b"
-                         domain={([dataMin]: [number, number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
+	                 <div>
+	                   <p className="mb-2 text-center text-xs font-medium uppercase tracking-wide text-slate-500">
+	                     R² Score (%) — higher is better
+	                   </p>
+	                   <div className="mb-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+	                     {r2ValueSummary.map((item) => (
+	                       <div key={item.label} className="flex items-center justify-center gap-2 rounded-md border border-slate-200 bg-white px-3 py-2 text-sm shadow-sm">
+	                         <span className={`h-2.5 w-2.5 rounded-full ${item.color}`} />
+	                         <span className="font-medium text-slate-600">{item.label}</span>
+	                         <span className="font-semibold text-slate-900">{formatR2Percent(item.value)}</span>
+	                       </div>
+	                     ))}
+	                   </div>
+	                   <ResponsiveContainer width="100%" height={280}>
+	                     <BarChart data={r2ChartData} barCategoryGap="60%" margin={{ top: 12, right: 16, left: 0, bottom: 0 }}>
+	                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+	                       <XAxis dataKey="metric" stroke="#64748b" />
+	                       <YAxis
+	                         stroke="#64748b"
+	                         domain={([dataMin]: [number, number]) => [Math.max(0, Math.floor(dataMin - 5)), 100]}
                          tickFormatter={(v: number) => `${v}%`}
                        />
-                       <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
-                       <Legend />
-                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]}>
-                         <LabelList dataKey="baseline" position="insideTop" offset={8} formatter={(v: number) => formatPercent(v, 4)} fill="#ffffff" fontSize={12} fontWeight={700} />
-                       </Bar>
-                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]}>
-                         <LabelList dataKey="fiAdaBoost" position="insideTop" offset={8} formatter={(v: number) => formatPercent(v, 4)} fill="#ffffff" fontSize={12} fontWeight={700} />
-                       </Bar>
-                     </BarChart>
-                   </ResponsiveContainer>
-                 </div>
+	                       <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
+	                       <Legend />
+	                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]} />
+	                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
+	                     </BarChart>
+	                   </ResponsiveContainer>
+	                 </div>
                </div>
              </section>
 
@@ -496,55 +549,146 @@ export function GlobalModelAnalytics() {
              <table className="w-full text-sm">
                <thead className="bg-slate-100 text-slate-700">
                  <tr>
-                   <th className="px-4 py-3 text-left font-semibold">Fold</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J/m²/day)</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J/m²/day)</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Val R² (%)</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J/m²/day)</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J/m²/day)</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Val R² (%)</th>
-                   <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J/m²/day)</th>
-                 </tr>
-               </thead>
-               <tbody>
-                 {spatialCv.folds.map((f) => (
-                   <tr key={f.fold} className="border-t border-slate-200 hover:bg-slate-50">
-                     <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
-                     <td className="px-4 py-3 text-right">{formatExact(f.baseline_train_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right">{formatR2Percent(f.baseline_val_r2)}</td>
-                     <td className="px-4 py-3 text-right">{formatExact(f.fi_train_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatR2Percent(f.fi_val_r2)}</td>
-                     <td className="px-4 py-3 text-right text-emerald-600">
-                       ↓ {formatExact(f.baseline_val_rmse - f.fi_val_rmse, 3)}
-                     </td>
-                   </tr>
-                 ))}
-                 <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
-                   <td className="px-4 py-3">Average</td>
-                   <td className="px-4 py-3 text-right">—</td>
-                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
-                   <td className="px-4 py-3 text-right">{formatR2Percent(spatialCv.average.baseline_val_r2)}</td>
-                   <td className="px-4 py-3 text-right">—</td>
-                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
-                   <td className="px-4 py-3 text-right text-emerald-600">{formatR2Percent(spatialCv.average.fi_val_r2)}</td>
-                   <td className="px-4 py-3 text-right text-emerald-600">
-                     ↓ {formatExact(spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse, 3)}
-                   </td>
-                 </tr>
+	                   <th className="px-4 py-3 text-left font-semibold">Fold</th>
+	                   <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">Ada Val MAE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">Ada Val R² (%)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">FI Val MAE (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">FI Val R² (%)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J/m²/day)</th>
+	                   <th className="px-4 py-3 text-right font-semibold">MAE Gain (J/m²/day)</th>
+	                 </tr>
+	               </thead>
+	               <tbody>
+	                 {spatialCv.folds.map((f) => {
+	                   const rmseGain = f.baseline_val_rmse - f.fi_val_rmse;
+	                   const maeGain = f.baseline_val_mae - f.fi_val_mae;
+	                   return (
+	                     <tr key={f.fold} className="border-t border-slate-200 hover:bg-slate-50">
+	                       <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
+	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_train_rmse, 3)}</td>
+	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
+	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_mae, 3)}</td>
+	                       <td className="px-4 py-3 text-right">{formatR2Percent(f.baseline_val_r2)}</td>
+	                       <td className="px-4 py-3 text-right">{formatExact(f.fi_train_rmse, 3)}</td>
+	                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
+	                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_mae, 3)}</td>
+	                       <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatR2Percent(f.fi_val_r2)}</td>
+	                       <td className={`px-4 py-3 text-right ${rmseGain >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+	                         {rmseGain >= 0 ? '↓' : '↑'} {formatExact(Math.abs(rmseGain), 3)}
+	                       </td>
+	                       <td className={`px-4 py-3 text-right ${maeGain >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+	                         {maeGain >= 0 ? '↓' : '↑'} {formatExact(Math.abs(maeGain), 3)}
+	                       </td>
+	                     </tr>
+	                   );
+	                 })}
+	                 <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+	                   <td className="px-4 py-3">Average</td>
+	                   <td className="px-4 py-3 text-right">—</td>
+	                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
+	                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_mae, 3)}</td>
+	                   <td className="px-4 py-3 text-right">{formatR2Percent(spatialCv.average.baseline_val_r2)}</td>
+	                   <td className="px-4 py-3 text-right">—</td>
+	                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
+	                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_mae, 3)}</td>
+	                   <td className="px-4 py-3 text-right text-emerald-600">{formatR2Percent(spatialCv.average.fi_val_r2)}</td>
+	                   <td className={`px-4 py-3 text-right ${spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+	                     {spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse >= 0 ? '↓' : '↑'} {formatExact(Math.abs(spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse), 3)}
+	                   </td>
+	                   <td className={`px-4 py-3 text-right ${spatialCv.average.baseline_val_mae - spatialCv.average.fi_val_mae >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
+	                     {spatialCv.average.baseline_val_mae - spatialCv.average.fi_val_mae >= 0 ? '↓' : '↑'} {formatExact(Math.abs(spatialCv.average.baseline_val_mae - spatialCv.average.fi_val_mae), 3)}
+	                   </td>
+	                 </tr>
                </tbody>
              </table>
            </div>
          ) : (
            <EmptyState message={loading ? 'Loading spatial CV…' : 'Spatial CV metrics unavailable.'} />
          )}
-       </CardContent>
-     </Card>
+	       </CardContent>
+	     </Card>
 
 
-     {/* ── SECTION 6: Diebold-Mariano Test ─────────────────────────────────── */}
-     <Card className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 shadow-xl">
+	     {/* ── SECTION 6: Feature Weight Proof ─────────────────────────────────── */}
+	     <Card className="border-2 border-orange-200 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 shadow-xl">
+	       <CardHeader>
+	         <CardTitle className="text-2xl">FI-AdaBoost Feature Weight Importance</CardTitle>
+	         <CardDescription>
+	           Ranked feature weights used by the FI-AdaBoost weighting mechanism. Values are served from <code>results/{featureWeights?.source_file ?? 'feature_weight_importance.csv'}</code>.
+	         </CardDescription>
+	       </CardHeader>
+	       <CardContent>
+	         {featureWeights ? (
+	           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+	             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+	               <ResponsiveContainer width="100%" height={360}>
+	                 <BarChart
+	                   data={featureWeightChartData}
+	                   layout="vertical"
+	                   margin={{ top: 12, right: 72, left: 12, bottom: 12 }}
+	                 >
+	                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+	                   <XAxis
+	                     type="number"
+	                     stroke="#64748b"
+	                     tickFormatter={(v: number) => formatPercent(v * 100, 0)}
+	                     domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 0.05)]}
+	                   />
+	                   <YAxis
+	                     dataKey="feature"
+	                     type="category"
+	                     stroke="#64748b"
+	                     width={150}
+	                     tick={{ fontSize: 11 }}
+	                   />
+	                   <Tooltip
+	                     formatter={(v: number | string) => formatPercent(Number(v) * 100, 6)}
+	                     labelFormatter={(label: string | number) => String(label)}
+	                   />
+	                   <Bar dataKey="weight" name="FI feature weight" fill="#f97316" radius={[0, 6, 6, 0]}>
+	                     <LabelList dataKey="percent" position="right" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
+	                   </Bar>
+	                 </BarChart>
+	               </ResponsiveContainer>
+	             </div>
+	             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+	               <table className="w-full text-sm">
+	                 <thead className="bg-slate-100 text-slate-700">
+	                   <tr>
+	                     <th className="px-4 py-3 text-left font-semibold">Rank</th>
+	                     <th className="px-4 py-3 text-left font-semibold">Feature</th>
+	                     <th className="px-4 py-3 text-right font-semibold">Weight</th>
+	                     <th className="px-4 py-3 text-right font-semibold">Percent</th>
+	                   </tr>
+	                 </thead>
+	                 <tbody>
+	                   {featureWeights.weights.map((item) => (
+	                     <tr key={item.feature} className="border-t border-slate-200 hover:bg-slate-50">
+	                       <td className="px-4 py-3 font-medium">{item.rank}</td>
+	                       <td className="px-4 py-3">{formatFeatureName(item.feature)}</td>
+	                       <td className="px-4 py-3 text-right font-mono">{formatExact(item.fi_feature_weight, 6)}</td>
+	                       <td className="px-4 py-3 text-right font-semibold text-orange-700">
+	                         {formatPercent(item.fi_feature_weight_percent, 4)}
+	                       </td>
+	                     </tr>
+	                   ))}
+	                 </tbody>
+	               </table>
+	             </div>
+	           </div>
+	         ) : (
+	           <EmptyState message={loading ? 'Loading feature weights…' : 'Feature weights unavailable.'} />
+	         )}
+	       </CardContent>
+	     </Card>
+
+
+	     {/* ── SECTION 6: Diebold-Mariano Test ─────────────────────────────────── */}
+	     <Card className="border-2 border-emerald-200 bg-gradient-to-br from-emerald-50 via-teal-50 to-cyan-50 shadow-xl">
        <CardHeader>
          <CardTitle className="text-2xl">Diebold-Mariano Statistical Test</CardTitle>
          <CardDescription>
@@ -668,19 +812,14 @@ export function GlobalModelAnalytics() {
                  caption: 'Baseline AdaBoost Feature Importances',
                  description: 'Gini-based feature importance from the baseline AdaBoost ensemble. Shows which of the 8 input features the standard boosting algorithm relied on most heavily.',
                },
-               {
-                 file: 'standalone_feature_importances.png',
-                 caption: 'FI-AdaBoost Feature Importances',
-                 description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
-               },
-               {
-                 file: 'feature_importance_comparison.png',
-                 caption: 'Feature Importance Comparison',
-                 description: 'Side-by-side feature importance from the fitted Baseline AdaBoost and FI-AdaBoost models. Very small nonzero values are labelled with scientific notation so they do not appear as rounded zero.',
-               },
-               {
-                 file: 'energy_distribution.png',
-                 caption: 'Energy Distribution',
+	               {
+	                 file: 'standalone_feature_importances.png',
+	                 caption: 'FI-AdaBoost Feature Importances',
+	                 description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
+	               },
+	               {
+	                 file: 'energy_distribution.png',
+	                 caption: 'Energy Distribution',
                  description: 'Per-building annual solar energy yield distribution across all 3,000 Davao City rooftops. The dashed line marks the mean yield; the spread reflects rooftop geometry and orientation diversity.',
                },
                {

@@ -57,6 +57,8 @@ BASELINE_MODEL_FILE = MODEL_DIR / "baseline_adaboost.pkl"
 METRICS_FILE = RESULTS_DIR / "metrics_summary.csv"
 CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics_daily.csv"
 SPATIAL_CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics.csv"
+FEATURE_WEIGHT_FILE = RESULTS_DIR / "feature_weight_importance.csv"
+FEATURE_IMPORTANCE_COMPARISON_FILE = RESULTS_DIR / "feature_importance_comparison.csv"
 DM_SPATIAL_FILE = RESULTS_DIR / "dm_test_results_spatial.csv"
 DM_DAILY_FILE = RESULTS_DIR / "dm_test_results_daily.csv"
 DAILY_METRICS_FILE = RESULTS_DIR / "daily_metrics_summary.csv"
@@ -162,10 +164,12 @@ class SpatialCVFold(BaseModel):
     fold: int
     baseline_train_rmse: float
     baseline_val_rmse: float
+    baseline_val_mae: float
     baseline_train_r2: float
     baseline_val_r2: float
     fi_train_rmse: float
     fi_val_rmse: float
+    fi_val_mae: float
     fi_train_r2: float
     fi_val_r2: float
 
@@ -173,6 +177,19 @@ class SpatialCVFold(BaseModel):
 class SpatialCVResponse(BaseModel):
     folds: list[SpatialCVFold]
     average: dict[str, float]
+
+
+class FeatureWeightRow(BaseModel):
+    rank: int
+    feature: str
+    fi_feature_weight: float
+    fi_feature_weight_percent: float
+    source: str
+
+
+class FeatureWeightsResponse(BaseModel):
+    weights: list[FeatureWeightRow]
+    source_file: str
 
 
 class DMTestResult(BaseModel):
@@ -1224,6 +1241,61 @@ def get_training_analytics() -> TrainingAnalyticsResponse:
     return ctx.training_analytics
 
 
+def _load_feature_weight_rows() -> tuple[list[FeatureWeightRow], str]:
+    if FEATURE_WEIGHT_FILE.exists():
+        df = pd.read_csv(FEATURE_WEIGHT_FILE)
+        required = {"feature", "fi_feature_weight", "fi_feature_weight_percent"}
+        missing = required.difference(df.columns)
+        if missing:
+            raise ValueError(f"{FEATURE_WEIGHT_FILE.name} is missing columns: {sorted(missing)}")
+
+        rows = [
+            FeatureWeightRow(
+                rank=int(row["rank"]) if "rank" in df.columns else idx + 1,
+                feature=str(row["feature"]),
+                fi_feature_weight=float(row["fi_feature_weight"]),
+                fi_feature_weight_percent=float(row["fi_feature_weight_percent"]),
+                source=str(row["source"]) if "source" in df.columns else "fi_adaboost_feature_importances_",
+            )
+            for idx, (_, row) in enumerate(df.iterrows())
+        ]
+        rows.sort(key=lambda item: item.rank)
+        return rows, FEATURE_WEIGHT_FILE.name
+
+    if FEATURE_IMPORTANCE_COMPARISON_FILE.exists():
+        df = pd.read_csv(FEATURE_IMPORTANCE_COMPARISON_FILE)
+        required = {"feature", "fi_importance_weight", "fi_importance_percent"}
+        missing = required.difference(df.columns)
+        if missing:
+            raise ValueError(
+                f"{FEATURE_IMPORTANCE_COMPARISON_FILE.name} is missing columns: {sorted(missing)}"
+            )
+
+        df = df.sort_values("fi_importance_weight", ascending=False).reset_index(drop=True)
+        rows = [
+            FeatureWeightRow(
+                rank=idx + 1,
+                feature=str(row["feature"]),
+                fi_feature_weight=float(row["fi_importance_weight"]),
+                fi_feature_weight_percent=float(row["fi_importance_percent"]),
+                source=str(row["fi_source"]) if "fi_source" in df.columns else "fi_adaboost_feature_importances_",
+            )
+            for idx, row in df.iterrows()
+        ]
+        return rows, FEATURE_IMPORTANCE_COMPARISON_FILE.name
+
+    raise FileNotFoundError("No feature-weight CSV is available.")
+
+
+@app.get("/feature-weights", response_model=FeatureWeightsResponse)
+def get_feature_weights() -> FeatureWeightsResponse:
+    try:
+        weights, source_file = _load_feature_weight_rows()
+        return FeatureWeightsResponse(weights=weights, source_file=source_file)
+    except Exception as exc:
+        raise HTTPException(status_code=503, detail=f"Failed to load feature weights: {exc}") from exc
+
+
 @app.get("/cv-metrics/spatial", response_model=SpatialCVResponse)
 def get_spatial_cv_metrics() -> SpatialCVResponse:
     if not SPATIAL_CV_METRICS_FILE.exists():
@@ -1235,10 +1307,12 @@ def get_spatial_cv_metrics() -> SpatialCVResponse:
                 fold=int(row["fold"]),
                 baseline_train_rmse=float(row["ada_train_RMSE_J"]),
                 baseline_val_rmse=float(row["ada_val_RMSE_J"]),
+                baseline_val_mae=float(row["ada_val_MAE_J"]),
                 baseline_train_r2=float(row["ada_train_R2"]),
                 baseline_val_r2=float(row["ada_val_R2"]),
                 fi_train_rmse=float(row["fi_train_RMSE_J"]),
                 fi_val_rmse=float(row["fi_val_RMSE_J"]),
+                fi_val_mae=float(row["fi_val_MAE_J"]),
                 fi_train_r2=float(row["fi_train_R2"]),
                 fi_val_r2=float(row["fi_val_R2"]),
             )
@@ -1246,8 +1320,10 @@ def get_spatial_cv_metrics() -> SpatialCVResponse:
         ]
         average = {
             "baseline_val_rmse": float(np.mean([f.baseline_val_rmse for f in folds])),
+            "baseline_val_mae": float(np.mean([f.baseline_val_mae for f in folds])),
             "baseline_val_r2": float(np.mean([f.baseline_val_r2 for f in folds])),
             "fi_val_rmse": float(np.mean([f.fi_val_rmse for f in folds])),
+            "fi_val_mae": float(np.mean([f.fi_val_mae for f in folds])),
             "fi_val_r2": float(np.mean([f.fi_val_r2 for f in folds])),
         }
         return SpatialCVResponse(folds=folds, average=average)

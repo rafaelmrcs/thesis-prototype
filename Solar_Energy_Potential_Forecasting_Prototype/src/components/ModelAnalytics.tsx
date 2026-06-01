@@ -130,17 +130,6 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                     Irradiance: {formatExact(liveComparison.fiAdaBoost.predictedIrradiance, 4)} kWh/m2/day
                   </p>
                 </div>
-                <div className="rounded-xl bg-gradient-to-br from-blue-500 to-cyan-600 p-4 text-white shadow-lg">
-                  <p className="text-xs opacity-80 uppercase tracking-wide">Difference</p>
-                  <p className="mt-1 text-3xl font-semibold">
-                    {liveComparison.improvement.solarPotentialDiff >= 0 ? '+' : ''}
-                    {formatExact(liveComparison.improvement.solarPotentialDiff, 2)}
-                  </p>
-                  <p className="text-xs opacity-70">
-                    ({liveComparison.improvement.solarPotentialImprovementPct >= 0 ? '+' : ''}
-                    {formatPercent(liveComparison.improvement.solarPotentialImprovementPct, 6)})
-                  </p>
-                </div>
               </div>
 
           
