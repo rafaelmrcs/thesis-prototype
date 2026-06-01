@@ -58,6 +58,7 @@ METRICS_FILE = RESULTS_DIR / "metrics_summary.csv"
 CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics_daily.csv"
 SPATIAL_CV_METRICS_FILE = RESULTS_DIR / "cv_fold_metrics.csv"
 FEATURE_WEIGHT_FILE = RESULTS_DIR / "feature_weight_importance.csv"
+BASELINE_FEATURE_WEIGHT_FILE = RESULTS_DIR / "baseline_feature_weight_importance.csv"
 FEATURE_IMPORTANCE_COMPARISON_FILE = RESULTS_DIR / "feature_importance_comparison.csv"
 DM_SPATIAL_FILE = RESULTS_DIR / "dm_test_results_spatial.csv"
 DM_DAILY_FILE = RESULTS_DIR / "dm_test_results_daily.csv"
@@ -182,14 +183,16 @@ class SpatialCVResponse(BaseModel):
 class FeatureWeightRow(BaseModel):
     rank: int
     feature: str
-    fi_feature_weight: float
-    fi_feature_weight_percent: float
+    feature_weight: float
+    feature_weight_percent: float
     source: str
 
 
 class FeatureWeightsResponse(BaseModel):
     weights: list[FeatureWeightRow]
     source_file: str
+    baseline_weights: list[FeatureWeightRow]
+    baseline_source_file: str
 
 
 class DMTestResult(BaseModel):
@@ -1241,57 +1244,106 @@ def get_training_analytics() -> TrainingAnalyticsResponse:
     return ctx.training_analytics
 
 
-def _load_feature_weight_rows() -> tuple[list[FeatureWeightRow], str]:
+def _rows_from_weight_csv(
+    path: Path,
+    weight_column: str,
+    percent_column: str,
+    default_source: str,
+) -> tuple[list[FeatureWeightRow], str]:
+    df = pd.read_csv(path)
+    required = {"feature", weight_column, percent_column}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(f"{path.name} is missing columns: {sorted(missing)}")
+
+    rows = [
+        FeatureWeightRow(
+            rank=int(row["rank"]) if "rank" in df.columns else idx + 1,
+            feature=str(row["feature"]),
+            feature_weight=float(row[weight_column]),
+            feature_weight_percent=float(row[percent_column]),
+            source=str(row["source"]) if "source" in df.columns else default_source,
+        )
+        for idx, (_, row) in enumerate(df.iterrows())
+    ]
+    rows.sort(key=lambda item: item.rank)
+    return rows, path.name
+
+
+def _rows_from_comparison_csv(
+    weight_column: str,
+    percent_column: str,
+    source_column: str,
+    default_source: str,
+) -> tuple[list[FeatureWeightRow], str]:
+    if not FEATURE_IMPORTANCE_COMPARISON_FILE.exists():
+        raise FileNotFoundError("No feature-weight CSV is available.")
+
+    df = pd.read_csv(FEATURE_IMPORTANCE_COMPARISON_FILE)
+    required = {"feature", weight_column, percent_column}
+    missing = required.difference(df.columns)
+    if missing:
+        raise ValueError(
+            f"{FEATURE_IMPORTANCE_COMPARISON_FILE.name} is missing columns: {sorted(missing)}"
+        )
+
+    df = df.sort_values(weight_column, ascending=False).reset_index(drop=True)
+    rows = [
+        FeatureWeightRow(
+            rank=idx + 1,
+            feature=str(row["feature"]),
+            feature_weight=float(row[weight_column]),
+            feature_weight_percent=float(row[percent_column]),
+            source=str(row[source_column]) if source_column in df.columns else default_source,
+        )
+        for idx, row in df.iterrows()
+    ]
+    return rows, FEATURE_IMPORTANCE_COMPARISON_FILE.name
+
+
+def _load_fi_feature_weight_rows() -> tuple[list[FeatureWeightRow], str]:
     if FEATURE_WEIGHT_FILE.exists():
-        df = pd.read_csv(FEATURE_WEIGHT_FILE)
-        required = {"feature", "fi_feature_weight", "fi_feature_weight_percent"}
-        missing = required.difference(df.columns)
-        if missing:
-            raise ValueError(f"{FEATURE_WEIGHT_FILE.name} is missing columns: {sorted(missing)}")
+        return _rows_from_weight_csv(
+            FEATURE_WEIGHT_FILE,
+            "fi_feature_weight",
+            "fi_feature_weight_percent",
+            "fi_adaboost_feature_importances_",
+        )
+    return _rows_from_comparison_csv(
+        "fi_importance_weight",
+        "fi_importance_percent",
+        "fi_source",
+        "fi_adaboost_feature_importances_",
+    )
 
-        rows = [
-            FeatureWeightRow(
-                rank=int(row["rank"]) if "rank" in df.columns else idx + 1,
-                feature=str(row["feature"]),
-                fi_feature_weight=float(row["fi_feature_weight"]),
-                fi_feature_weight_percent=float(row["fi_feature_weight_percent"]),
-                source=str(row["source"]) if "source" in df.columns else "fi_adaboost_feature_importances_",
-            )
-            for idx, (_, row) in enumerate(df.iterrows())
-        ]
-        rows.sort(key=lambda item: item.rank)
-        return rows, FEATURE_WEIGHT_FILE.name
 
-    if FEATURE_IMPORTANCE_COMPARISON_FILE.exists():
-        df = pd.read_csv(FEATURE_IMPORTANCE_COMPARISON_FILE)
-        required = {"feature", "fi_importance_weight", "fi_importance_percent"}
-        missing = required.difference(df.columns)
-        if missing:
-            raise ValueError(
-                f"{FEATURE_IMPORTANCE_COMPARISON_FILE.name} is missing columns: {sorted(missing)}"
-            )
-
-        df = df.sort_values("fi_importance_weight", ascending=False).reset_index(drop=True)
-        rows = [
-            FeatureWeightRow(
-                rank=idx + 1,
-                feature=str(row["feature"]),
-                fi_feature_weight=float(row["fi_importance_weight"]),
-                fi_feature_weight_percent=float(row["fi_importance_percent"]),
-                source=str(row["fi_source"]) if "fi_source" in df.columns else "fi_adaboost_feature_importances_",
-            )
-            for idx, row in df.iterrows()
-        ]
-        return rows, FEATURE_IMPORTANCE_COMPARISON_FILE.name
-
-    raise FileNotFoundError("No feature-weight CSV is available.")
+def _load_baseline_feature_weight_rows() -> tuple[list[FeatureWeightRow], str]:
+    if BASELINE_FEATURE_WEIGHT_FILE.exists():
+        return _rows_from_weight_csv(
+            BASELINE_FEATURE_WEIGHT_FILE,
+            "baseline_feature_weight",
+            "baseline_feature_weight_percent",
+            "ada_feature_importances_",
+        )
+    return _rows_from_comparison_csv(
+        "actual_baseline_importance_weight",
+        "actual_baseline_importance_percent",
+        "actual_baseline_source",
+        "ada_feature_importances_",
+    )
 
 
 @app.get("/feature-weights", response_model=FeatureWeightsResponse)
 def get_feature_weights() -> FeatureWeightsResponse:
     try:
-        weights, source_file = _load_feature_weight_rows()
-        return FeatureWeightsResponse(weights=weights, source_file=source_file)
+        weights, source_file = _load_fi_feature_weight_rows()
+        baseline_weights, baseline_source_file = _load_baseline_feature_weight_rows()
+        return FeatureWeightsResponse(
+            weights=weights,
+            source_file=source_file,
+            baseline_weights=baseline_weights,
+            baseline_source_file=baseline_source_file,
+        )
     except Exception as exc:
         raise HTTPException(status_code=503, detail=f"Failed to load feature weights: {exc}") from exc
 

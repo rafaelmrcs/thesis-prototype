@@ -161,8 +161,8 @@ interface SplitInfoData {
 interface FeatureWeightRow {
 	 rank: number;
 	 feature: string;
-	 fi_feature_weight: number;
-	 fi_feature_weight_percent: number;
+	 feature_weight: number;
+	 feature_weight_percent: number;
 	 source: string;
 }
 
@@ -170,6 +170,8 @@ interface FeatureWeightRow {
 interface FeatureWeightsData {
 	 weights: FeatureWeightRow[];
 	 source_file: string;
+	 baseline_weights: FeatureWeightRow[];
+	 baseline_source_file: string;
 }
 
 
@@ -217,6 +219,22 @@ function formatFeatureName(value: string): string {
 	 return value
 	   .replace(/_/g, ' ')
 	   .replace(/\b\w/g, (char) => char.toUpperCase());
+}
+
+
+function formatSmallNumber(value: number, fractionDigits = 6): string {
+	 if (value !== 0 && Math.abs(value) < 10 ** -fractionDigits) {
+	   return value.toExponential(3);
+	 }
+	 return formatExact(value, fractionDigits);
+}
+
+
+function formatSmallPercent(value: number, fractionDigits = 4): string {
+	 if (value !== 0 && Math.abs(value) < 10 ** -fractionDigits) {
+	   return `${value.toExponential(3)}%`;
+	 }
+	 return formatPercent(value, fractionDigits);
 }
 
 
@@ -336,8 +354,19 @@ export function GlobalModelAnalytics() {
 	     rank: item.rank,
 	     feature: formatFeatureName(item.feature),
 	     rawFeature: item.feature,
-	     weight: item.fi_feature_weight,
-	     percent: item.fi_feature_weight_percent,
+	     weight: item.feature_weight,
+	     percent: item.feature_weight_percent,
+	     source: item.source,
+	   })) ?? [];
+
+
+	 const baselineFeatureWeightChartData =
+	   featureWeights?.baseline_weights.map((item) => ({
+	     rank: item.rank,
+	     feature: formatFeatureName(item.feature),
+	     rawFeature: item.feature,
+	     weight: item.feature_weight,
+	     percent: item.feature_weight_percent,
 	     source: item.source,
 	   })) ?? [];
 
@@ -616,69 +645,144 @@ export function GlobalModelAnalytics() {
 	     {/* ── SECTION 6: Feature Weight Proof ─────────────────────────────────── */}
 	     <Card className="border-2 border-orange-200 bg-gradient-to-br from-orange-50 via-amber-50 to-yellow-50 shadow-xl">
 	       <CardHeader>
-	         <CardTitle className="text-2xl">FI-AdaBoost Feature Weight Importance</CardTitle>
+	         <CardTitle className="text-2xl">Feature Weight Importance</CardTitle>
 	         <CardDescription>
-	           Ranked feature weights used by the FI-AdaBoost weighting mechanism. Values are served from <code>results/{featureWeights?.source_file ?? 'feature_weight_importance.csv'}</code>.
+	           Ranked actual fitted baseline AdaBoost weights and FI-AdaBoost weights served from <code>results/</code>.
 	         </CardDescription>
 	       </CardHeader>
 	       <CardContent>
 	         {featureWeights ? (
-	           <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
-	             <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-	               <ResponsiveContainer width="100%" height={360}>
-	                 <BarChart
-	                   data={featureWeightChartData}
-	                   layout="vertical"
-	                   margin={{ top: 12, right: 72, left: 12, bottom: 12 }}
-	                 >
-	                   <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-	                   <XAxis
-	                     type="number"
-	                     stroke="#64748b"
-	                     tickFormatter={(v: number) => formatPercent(v * 100, 0)}
-	                     domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 0.05)]}
-	                   />
-	                   <YAxis
-	                     dataKey="feature"
-	                     type="category"
-	                     stroke="#64748b"
-	                     width={150}
-	                     tick={{ fontSize: 11 }}
-	                   />
-	                   <Tooltip
-	                     formatter={(v: number | string) => formatPercent(Number(v) * 100, 6)}
-	                     labelFormatter={(label: string | number) => String(label)}
-	                   />
-	                   <Bar dataKey="weight" name="FI feature weight" fill="#f97316" radius={[0, 6, 6, 0]}>
-	                     <LabelList dataKey="percent" position="right" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
-	                   </Bar>
-	                 </BarChart>
-	               </ResponsiveContainer>
-	             </div>
-	             <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
-	               <table className="w-full text-sm">
-	                 <thead className="bg-slate-100 text-slate-700">
-	                   <tr>
-	                     <th className="px-4 py-3 text-left font-semibold">Rank</th>
-	                     <th className="px-4 py-3 text-left font-semibold">Feature</th>
-	                     <th className="px-4 py-3 text-right font-semibold">Weight</th>
-	                     <th className="px-4 py-3 text-right font-semibold">Percent</th>
-	                   </tr>
-	                 </thead>
-	                 <tbody>
-	                   {featureWeights.weights.map((item) => (
-	                     <tr key={item.feature} className="border-t border-slate-200 hover:bg-slate-50">
-	                       <td className="px-4 py-3 font-medium">{item.rank}</td>
-	                       <td className="px-4 py-3">{formatFeatureName(item.feature)}</td>
-	                       <td className="px-4 py-3 text-right font-mono">{formatExact(item.fi_feature_weight, 6)}</td>
-	                       <td className="px-4 py-3 text-right font-semibold text-orange-700">
-	                         {formatPercent(item.fi_feature_weight_percent, 4)}
-	                       </td>
-	                     </tr>
-	                   ))}
-	                 </tbody>
-	               </table>
-	             </div>
+	           <div className="space-y-8">
+	             <section>
+	               <div className="mb-3">
+	                 <h3 className="text-lg font-semibold">Baseline AdaBoost Feature Weight Importance</h3>
+	                 <p className="text-sm text-slate-500">
+	                   Actual fitted AdaBoost feature weights from <code>results/{featureWeights.baseline_source_file}</code>.
+	                 </p>
+	               </div>
+	               <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+	                 <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+	                   <ResponsiveContainer width="100%" height={360}>
+	                     <BarChart
+	                       data={baselineFeatureWeightChartData}
+	                       layout="vertical"
+	                       margin={{ top: 12, right: 72, left: 12, bottom: 12 }}
+	                     >
+	                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+	                       <XAxis
+	                         type="number"
+	                         stroke="#64748b"
+	                         tickFormatter={(v: number) => formatPercent(v * 100, 0)}
+	                         domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 0.05)]}
+	                       />
+	                       <YAxis
+	                         dataKey="feature"
+	                         type="category"
+	                         stroke="#64748b"
+	                         width={150}
+	                         tick={{ fontSize: 11 }}
+	                       />
+	                       <Tooltip
+	                         formatter={(v: number | string) => formatSmallPercent(Number(v) * 100, 6)}
+	                         labelFormatter={(label: string | number) => String(label)}
+	                       />
+	                       <Bar dataKey="weight" name="Baseline feature weight" fill="#3b82f6" radius={[0, 6, 6, 0]}>
+	                         <LabelList dataKey="percent" position="right" formatter={(v: number) => formatSmallPercent(v, 4)} fill="#334155" fontSize={12} />
+	                       </Bar>
+	                     </BarChart>
+	                   </ResponsiveContainer>
+	                 </div>
+	                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+	                   <table className="w-full text-sm">
+	                     <thead className="bg-slate-100 text-slate-700">
+	                       <tr>
+	                         <th className="px-4 py-3 text-left font-semibold">Rank</th>
+	                         <th className="px-4 py-3 text-left font-semibold">Feature</th>
+	                         <th className="px-4 py-3 text-right font-semibold">Weight</th>
+	                         <th className="px-4 py-3 text-right font-semibold">Percent</th>
+	                       </tr>
+	                     </thead>
+	                     <tbody>
+	                       {featureWeights.baseline_weights.map((item) => (
+	                         <tr key={item.feature} className="border-t border-slate-200 hover:bg-slate-50">
+	                           <td className="px-4 py-3 font-medium">{item.rank}</td>
+	                           <td className="px-4 py-3">{formatFeatureName(item.feature)}</td>
+	                           <td className="px-4 py-3 text-right font-mono">{formatSmallNumber(item.feature_weight, 6)}</td>
+	                           <td className="px-4 py-3 text-right font-semibold text-blue-700">
+	                             {formatSmallPercent(item.feature_weight_percent, 4)}
+	                           </td>
+	                         </tr>
+	                       ))}
+	                     </tbody>
+	                   </table>
+	                 </div>
+	               </div>
+	             </section>
+	             <section>
+	               <div className="mb-3">
+	                 <h3 className="text-lg font-semibold">FI-AdaBoost Feature Weight Importance</h3>
+	                 <p className="text-sm text-slate-500">
+	                   FI-AdaBoost feature-aware weights from <code>results/{featureWeights.source_file}</code>.
+	                 </p>
+	               </div>
+	               <div className="grid grid-cols-1 gap-6 xl:grid-cols-[minmax(0,1.2fr)_minmax(360px,0.8fr)]">
+	                 <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
+	                   <ResponsiveContainer width="100%" height={360}>
+	                     <BarChart
+	                       data={featureWeightChartData}
+	                       layout="vertical"
+	                       margin={{ top: 12, right: 72, left: 12, bottom: 12 }}
+	                     >
+	                       <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
+	                       <XAxis
+	                         type="number"
+	                         stroke="#64748b"
+	                         tickFormatter={(v: number) => formatPercent(v * 100, 0)}
+	                         domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 0.05)]}
+	                       />
+	                       <YAxis
+	                         dataKey="feature"
+	                         type="category"
+	                         stroke="#64748b"
+	                         width={150}
+	                         tick={{ fontSize: 11 }}
+	                       />
+	                       <Tooltip
+	                         formatter={(v: number | string) => formatSmallPercent(Number(v) * 100, 6)}
+	                         labelFormatter={(label: string | number) => String(label)}
+	                       />
+	                       <Bar dataKey="weight" name="FI feature weight" fill="#f97316" radius={[0, 6, 6, 0]}>
+	                         <LabelList dataKey="percent" position="right" formatter={(v: number) => formatSmallPercent(v, 4)} fill="#334155" fontSize={12} />
+	                       </Bar>
+	                     </BarChart>
+	                   </ResponsiveContainer>
+	                 </div>
+	                 <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
+	                   <table className="w-full text-sm">
+	                     <thead className="bg-slate-100 text-slate-700">
+	                       <tr>
+	                         <th className="px-4 py-3 text-left font-semibold">Rank</th>
+	                         <th className="px-4 py-3 text-left font-semibold">Feature</th>
+	                         <th className="px-4 py-3 text-right font-semibold">Weight</th>
+	                         <th className="px-4 py-3 text-right font-semibold">Percent</th>
+	                       </tr>
+	                     </thead>
+	                     <tbody>
+	                       {featureWeights.weights.map((item) => (
+	                         <tr key={item.feature} className="border-t border-slate-200 hover:bg-slate-50">
+	                           <td className="px-4 py-3 font-medium">{item.rank}</td>
+	                           <td className="px-4 py-3">{formatFeatureName(item.feature)}</td>
+	                           <td className="px-4 py-3 text-right font-mono">{formatSmallNumber(item.feature_weight, 6)}</td>
+	                           <td className="px-4 py-3 text-right font-semibold text-orange-700">
+	                             {formatSmallPercent(item.feature_weight_percent, 4)}
+	                           </td>
+	                         </tr>
+	                       ))}
+	                     </tbody>
+	                   </table>
+	                 </div>
+	               </div>
+	             </section>
 	           </div>
 	         ) : (
 	           <EmptyState message={loading ? 'Loading feature weights…' : 'Feature weights unavailable.'} />
@@ -807,15 +911,30 @@ export function GlobalModelAnalytics() {
                  caption: 'Overfit Check (Train vs Test)',
                  description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
                },
-               {
-                 file: 'baseline_feature_importances.png',
-                 caption: 'Baseline AdaBoost Feature Importances',
-                 description: 'Gini-based feature importance from the baseline AdaBoost ensemble. Shows which of the 8 input features the standard boosting algorithm relied on most heavily.',
-               },
+	               {
+	                 file: 'baseline_feature_importances.png',
+	                 caption: 'Uniform Baseline Feature Reference',
+	                 description: 'Uniform no-feature-weighting reference used to contrast the standard AdaBoost baseline against the feature-aware FI-AdaBoost weighting mechanism.',
+	               },
+	               {
+	                 file: 'actual_baseline_feature_importances.png',
+	                 caption: 'Actual Baseline AdaBoost Feature Importances',
+	                 description: 'Gini-based feature importance from the fitted baseline AdaBoost ensemble. Shows which input features the standard model relied on most heavily.',
+	               },
+	               {
+	                 file: 'baseline_feature_weight_importance.png',
+	                 caption: 'Baseline AdaBoost Feature Weight Importance',
+	                 description: 'Actual fitted baseline AdaBoost feature weights exported from the training run for direct comparison against FI-AdaBoost feature-aware weights.',
+	               },
 	               {
 	                 file: 'standalone_feature_importances.png',
 	                 caption: 'FI-AdaBoost Feature Importances',
 	                 description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
+	               },
+	               {
+	                 file: 'feature_weight_importance.png',
+	                 caption: 'FI-AdaBoost Feature Weight Importance',
+	                 description: 'Explicit feature-weight proof artifact showing the FI-AdaBoost weights used by the feature-aware boosting mechanism.',
 	               },
 	               {
 	                 file: 'energy_distribution.png',

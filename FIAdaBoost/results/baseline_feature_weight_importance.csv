@@ -1,0 +1,9 @@
+rank,feature,baseline_feature_weight,baseline_feature_weight_percent,source
+1,clear_sky_ratio,0.598513620648,59.8513620648,ada_feature_importances_
+2,lat,0.24600324667,24.600324667,ada_feature_importances_
+3,shading_factor,0.0589235379545,5.89235379545,ada_feature_importances_
+4,orientation_score,0.0475008462112,4.75008462112,ada_feature_importances_
+5,azimuth,0.0468330315156,4.68330315156,ada_feature_importances_
+6,SEI_norm,0.00142914940271,0.142914940271,ada_feature_importances_
+7,lon,0.000795849985231,0.0795849985231,ada_feature_importances_
+8,sunshine_hours,7.17612787627e-07,7.17612787627e-05,ada_feature_importances_

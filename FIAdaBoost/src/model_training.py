@@ -954,6 +954,25 @@ def save_feature_weight_csv(fi_vals, feats) -> str:
     return path
 
 
+def save_baseline_feature_weight_csv(ada_vals, feats) -> str:
+    """Save actual fitted baseline AdaBoost feature weights as a comparable proof artifact."""
+    order = np.argsort(ada_vals)[::-1]
+    rows = []
+    for rank, idx in enumerate(order, start=1):
+        weight = float(ada_vals[idx])
+        rows.append({
+            "rank": rank,
+            "feature": str(feats[idx]),
+            "baseline_feature_weight": weight,
+            "baseline_feature_weight_percent": weight * 100,
+            "source": "ada_feature_importances_",
+        })
+
+    path = os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.csv")
+    pd.DataFrame(rows).to_csv(path, index=False, float_format="%.12g")
+    return path
+
+
 # =============================================================================
 # PLOTS
 # =============================================================================
@@ -1005,6 +1024,37 @@ def plot_feature_weight_importance(fi_vals, feats):
     ax.spines["right"].set_visible(False)
     fig.tight_layout()
     fig.savefig(os.path.join(RESULTS_DIR, "feature_weight_importance.png"), dpi=300)
+    plt.close(fig)
+
+
+def plot_baseline_feature_weight_importance(ada_vals, feats):
+    fig, ax = plt.subplots(figsize=(10, 6))
+    labels = [f.replace("_", " ").title() for f in feats]
+    idx = np.argsort(ada_vals)
+    sv = ada_vals[idx]
+    sl = np.array(labels)[idx]
+    bars = ax.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.88)
+    for bar, val in zip(bars, sv):
+        ax.text(
+            val + 0.005,
+            bar.get_y() + bar.get_height() / 2,
+            f"{val * 100:.4f}%",
+            va="center",
+            ha="left",
+            fontsize=10,
+            fontweight="bold",
+        )
+    ax.set_title(
+        "Baseline AdaBoost Feature Weight Importance\nActual Fitted AdaBoost Feature Importances",
+        fontsize=14,
+        fontweight="bold",
+    )
+    ax.set_xlabel("Feature Weight from Fitted AdaBoost", fontsize=12)
+    ax.set_xlim(0, max(sv) + 0.1)
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.png"), dpi=300)
     plt.close(fig)
 
 
@@ -1350,10 +1400,12 @@ def main():
         uniform_imp, ada.feature_importances_, fi.feature_importances_, SHARED_FEATURES
     )
     p_feature_weight = save_feature_weight_csv(fi.feature_importances_, SHARED_FEATURES)
+    p_baseline_feature_weight = save_baseline_feature_weight_csv(ada.feature_importances_, SHARED_FEATURES)
     plot_standalone_baseline_feature_importance(uniform_imp, SHARED_FEATURES)
     plot_actual_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
     plot_feature_weight_importance(fi.feature_importances_, SHARED_FEATURES)
+    plot_baseline_feature_weight_importance(ada.feature_importances_, SHARED_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
     plot_metrics_comparison(ada_test_m, fi_test_m)
@@ -1369,10 +1421,12 @@ def main():
         ("CSV",   p_dm),
         ("CSV",   p_feature_importance),
         ("CSV",   p_feature_weight),
+        ("CSV",   p_baseline_feature_weight),
         ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "feature_weight_importance.png")),
+        ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "metrics_comparison.png")),
