@@ -912,24 +912,9 @@ export function GlobalModelAnalytics() {
                  description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
                },
 	               {
-	                 file: 'baseline_feature_importances.png',
-	                 caption: 'Uniform Baseline Feature Reference',
-	                 description: 'Uniform no-feature-weighting reference used to contrast the standard AdaBoost baseline against the feature-aware FI-AdaBoost weighting mechanism.',
-	               },
-	               {
-	                 file: 'actual_baseline_feature_importances.png',
-	                 caption: 'Actual Baseline AdaBoost Feature Importances',
-	                 description: 'Gini-based feature importance from the fitted baseline AdaBoost ensemble. Shows which input features the standard model relied on most heavily.',
-	               },
-	               {
 	                 file: 'baseline_feature_weight_importance.png',
 	                 caption: 'Baseline AdaBoost Feature Weight Importance',
 	                 description: 'Actual fitted baseline AdaBoost feature weights exported from the training run for direct comparison against FI-AdaBoost feature-aware weights.',
-	               },
-	               {
-	                 file: 'standalone_feature_importances.png',
-	                 caption: 'FI-AdaBoost Feature Importances',
-	                 description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
 	               },
 	               {
 	                 file: 'feature_weight_importance.png',
