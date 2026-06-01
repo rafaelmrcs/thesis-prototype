@@ -1,0 +1,5 @@
+pipeline,model,tuning_method,cv_method,n_trials,n_splits,objective_metric,target,target_unit,features,random_seed,n_estimators,learning_rate,max_depth
+spatial_rooftop,AdaBoost (Baseline),Optuna TPE,KFold,100,5,mean_validation_RMSE_J,effective_GHI_J,J/m2/day,"lat,lon,azimuth,orientation_score,shading_factor,SEI_norm,clear_sky_ratio,sunshine_hours",42,227,0.5974242917544316,5
+spatial_rooftop,FI-AdaBoost (Proposed),Optuna TPE,KFold,100,5,mean_validation_RMSE_J,effective_GHI_J,J/m2/day,"lat,lon,azimuth,orientation_score,shading_factor,SEI_norm,clear_sky_ratio,sunshine_hours",42,51,1.5027702943021397,6
+daily_temporal,"AdaBoost (Daily, Temporal Split)",Optuna TPE,TimeSeriesSplit,100,5,mean_validation_RMSE_J,GHI_J,J/m2/day,"month_sin,month_cos,season,T2M,RH2M,ALLSKY_KT,clear_sky_ratio,sunshine_hours,mean_orientation_score,mean_shading_factor,mean_SEI_norm",42,260,1.978464798774777,5
+daily_temporal,"FI-AdaBoost (Daily, Temporal Split)",Optuna TPE,TimeSeriesSplit,100,5,mean_validation_RMSE_J,GHI_J,J/m2/day,"month_sin,month_cos,season,T2M,RH2M,ALLSKY_KT,clear_sky_ratio,sunshine_hours,mean_orientation_score,mean_shading_factor,mean_SEI_norm",42,245,0.4326188872020242,5

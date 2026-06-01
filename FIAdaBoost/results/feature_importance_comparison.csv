@@ -1,0 +1,9 @@
+feature,baseline_source,baseline_importance_weight,baseline_importance_percent,actual_baseline_source,actual_baseline_importance_weight,actual_baseline_importance_percent,fi_source,fi_importance_weight,fi_importance_percent,actual_baseline_rank,fi_rank
+lat,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.24600324667,24.600324667,fi_adaboost_feature_importances_,0.187214108825,18.7214108825,2,2
+lon,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.000795849985231,0.0795849985231,fi_adaboost_feature_importances_,0.000408212576496,0.0408212576496,7,7
+azimuth,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.0468330315156,4.68330315156,fi_adaboost_feature_importances_,0.0312839653832,3.12839653832,5,4
+orientation_score,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.0475008462112,4.75008462112,fi_adaboost_feature_importances_,0.0296823096599,2.96823096599,4,5
+shading_factor,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.0589235379545,5.89235379545,fi_adaboost_feature_importances_,0.0620203813391,6.20203813391,3,3
+SEI_norm,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.00142914940271,0.142914940271,fi_adaboost_feature_importances_,0.00151381049482,0.151381049482,6,6
+clear_sky_ratio,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,0.598513620648,59.8513620648,fi_adaboost_feature_importances_,0.687877211721,68.7877211721,1,1
+sunshine_hours,uniform_no_feature_weighting_reference,0.125,12.5,ada_feature_importances_,7.17612787627e-07,7.17612787627e-05,fi_adaboost_feature_importances_,1.00324765004e-12,1.00324765004e-10,8,8
