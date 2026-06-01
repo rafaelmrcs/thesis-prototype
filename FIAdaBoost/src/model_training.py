@@ -904,21 +904,29 @@ def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     return path
 
 
-def save_feature_importance_csv(baseline_vals, fi_vals, feats) -> str:
+def save_feature_importance_csv(uniform_baseline_vals, actual_baseline_vals, fi_vals, feats) -> str:
     """Save exact feature-importance values used by the feature-importance PNGs."""
     rows = []
-    for feat, baseline_val, fi_val in zip(feats, baseline_vals, fi_vals):
+    for feat, uniform_val, actual_val, fi_val in zip(
+        feats, uniform_baseline_vals, actual_baseline_vals, fi_vals
+    ):
         rows.append({
-            "feature":                       feat,
-            "baseline_source":               "uniform_no_feature_weighting_reference",
-            "baseline_importance_weight":    float(baseline_val),
-            "baseline_importance_percent":   float(baseline_val) * 100,
-            "fi_source":                     "fi_adaboost_feature_importances_",
-            "fi_importance_weight":          float(fi_val),
-            "fi_importance_percent":         float(fi_val) * 100,
+            "feature":                            feat,
+            "baseline_source":                    "uniform_no_feature_weighting_reference",
+            "baseline_importance_weight":         float(uniform_val),
+            "baseline_importance_percent":        float(uniform_val) * 100,
+            "actual_baseline_source":             "ada_feature_importances_",
+            "actual_baseline_importance_weight":  float(actual_val),
+            "actual_baseline_importance_percent": float(actual_val) * 100,
+            "fi_source":                          "fi_adaboost_feature_importances_",
+            "fi_importance_weight":               float(fi_val),
+            "fi_importance_percent":              float(fi_val) * 100,
         })
 
     df = pd.DataFrame(rows)
+    df["actual_baseline_rank"] = df["actual_baseline_importance_weight"].rank(
+        ascending=False, method="min"
+    ).astype(int)
     df["fi_rank"] = df["fi_importance_weight"].rank(
         ascending=False, method="min"
     ).astype(int)
@@ -967,6 +975,27 @@ def plot_standalone_baseline_feature_importance(ada_vals, feats):
     plt.gca().spines["right"].set_visible(False)
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "baseline_feature_importances.png"), dpi=300)
+    plt.close()
+
+
+def plot_actual_baseline_feature_importance(ada_vals, feats):
+    plt.figure(figsize=(10, 6))
+    labels     = [f.replace("_", " ").title() for f in feats]
+    idx        = np.argsort(ada_vals)    # sort ascending so the longest bar is at the top
+    sv         = ada_vals[idx]
+    sl         = np.array(labels)[idx]
+    bars       = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
+    for bar, val in zip(bars, sv):
+        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
+                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
+    plt.title("Actual Baseline AdaBoost Feature Importance\nGini-Based from Fitted AdaBoost Ensemble",
+              fontsize=14, fontweight="bold")
+    plt.xlabel("Relative Importance Weight", fontsize=12)
+    plt.xlim(0, max(sv) + 0.1)
+    plt.gca().spines["top"].set_visible(False)
+    plt.gca().spines["right"].set_visible(False)
+    plt.tight_layout()
+    plt.savefig(os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png"), dpi=300)
     plt.close()
 
 
@@ -1268,9 +1297,10 @@ def main():
 
     uniform_imp = np.ones(len(SHARED_FEATURES)) / len(SHARED_FEATURES)
     p_feature_importance = save_feature_importance_csv(
-        uniform_imp, fi.feature_importances_, SHARED_FEATURES
+        uniform_imp, ada.feature_importances_, fi.feature_importances_, SHARED_FEATURES
     )
     plot_standalone_baseline_feature_importance(uniform_imp, SHARED_FEATURES)
+    plot_actual_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
@@ -1287,6 +1317,7 @@ def main():
         ("CSV",   p_dm),
         ("CSV",   p_feature_importance),
         ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
+        ("Plot",  os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
