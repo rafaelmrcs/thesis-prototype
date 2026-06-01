@@ -6,6 +6,7 @@ import {
  BarChart,
  CartesianGrid,
  Legend,
+ LabelList,
  Line,
  LineChart,
  ReferenceLine,
@@ -180,6 +181,19 @@ function formatPercent(value: number, fractionDigits = 6): string {
 }
 
 
+function formatGrouped(value: number, fractionDigits = 2): string {
+ return value.toLocaleString('en-US', {
+   minimumFractionDigits: fractionDigits,
+   maximumFractionDigits: fractionDigits,
+ });
+}
+
+
+function formatR2Percent(value: number, fractionDigits = 4): string {
+ return formatPercent(value * 100, fractionDigits);
+}
+
+
 // ─── Main component ───────────────────────────────────────────────────────────
 
 
@@ -338,10 +352,14 @@ export function GlobalModelAnalytics() {
                        <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
                        <XAxis dataKey="metric" stroke="#64748b" />
                        <YAxis stroke="#64748b" />
-                       <Tooltip formatter={(v: number | string) => formatExact(Number(v), 6)} />
+                       <Tooltip formatter={(v: number | string) => formatGrouped(Number(v), 6)} />
                        <Legend />
-                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
+                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]}>
+                         <LabelList dataKey="baseline" position="top" formatter={(v: number) => formatGrouped(v, 2)} fill="#334155" fontSize={12} />
+                       </Bar>
+                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]}>
+                         <LabelList dataKey="fiAdaBoost" position="top" formatter={(v: number) => formatGrouped(v, 2)} fill="#334155" fontSize={12} />
+                       </Bar>
                      </BarChart>
                    </ResponsiveContainer>
                  </div>
@@ -360,8 +378,12 @@ export function GlobalModelAnalytics() {
                        />
                        <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
                        <Legend />
-                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]} />
-                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]} />
+                       <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]}>
+                         <LabelList dataKey="baseline" position="top" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
+                       </Bar>
+                       <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]}>
+                         <LabelList dataKey="fiAdaBoost" position="top" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
+                       </Bar>
                      </BarChart>
                    </ResponsiveContainer>
                  </div>
@@ -413,7 +435,7 @@ export function GlobalModelAnalytics() {
                    </thead>
                    <tbody>
                      <tr className="border-t border-slate-200 hover:bg-slate-50">
-                       <td className="px-4 py-3 font-medium">RMSE</td>
+                       <td className="px-4 py-3 font-medium">RMSE (J/m²/day)</td>
                        <td className="px-4 py-3 text-right">{formatResultsErrorMetric(mc.baseline.rmse)}</td>
                        <td className={`px-4 py-3 text-right font-semibold ${mc.rmseImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                          {formatResultsErrorMetric(mc.fiAdaBoost.rmse)}
@@ -423,7 +445,7 @@ export function GlobalModelAnalytics() {
                        </td>
                      </tr>
                      <tr className="border-t border-slate-200 hover:bg-slate-50">
-                       <td className="px-4 py-3 font-medium">MAE</td>
+                       <td className="px-4 py-3 font-medium">MAE (J/m²/day)</td>
                        <td className="px-4 py-3 text-right">{formatResultsErrorMetric(mc.baseline.mae)}</td>
                        <td className={`px-4 py-3 text-right font-semibold ${mc.maeImprovementPct >= 0 ? 'text-emerald-700' : 'text-red-700'}`}>
                          {formatResultsErrorMetric(mc.fiAdaBoost.mae)}
@@ -433,10 +455,10 @@ export function GlobalModelAnalytics() {
                        </td>
                      </tr>
                      <tr className="border-t border-slate-200 hover:bg-slate-50">
-                       <td className="px-4 py-3 font-medium">R²</td>
-                       <td className="px-4 py-3 text-right">{formatRawR2(mc.baseline.r2)}</td>
+                       <td className="px-4 py-3 font-medium">R² (%)</td>
+                       <td className="px-4 py-3 text-right">{formatR2Percent(mc.baseline.r2)}</td>
                        <td className={`px-4 py-3 text-right font-semibold ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
-                         {formatRawR2(mc.fiAdaBoost.r2)}
+                         {formatR2Percent(mc.fiAdaBoost.r2)}
                        </td>
                        <td className={`px-4 py-3 text-right ${mc.r2ImprovementPct >= 0 ? 'text-sky-700' : 'text-red-700'}`}>
                          {mc.r2ImprovementPct >= 0 ? '↑' : '↓'} {formatPercent(Math.abs(mc.r2ImprovementPct), 6)}
@@ -475,13 +497,13 @@ export function GlobalModelAnalytics() {
                <thead className="bg-slate-100 text-slate-700">
                  <tr>
                    <th className="px-4 py-3 text-left font-semibold">Fold</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J)</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J)</th>
-                   <th className="px-4 py-3 text-right font-semibold">Ada Val R²</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J)</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J)</th>
-                   <th className="px-4 py-3 text-right font-semibold">FI Val R²</th>
-                   <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J)</th>
+                   <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J/m²/day)</th>
+                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J/m²/day)</th>
+                   <th className="px-4 py-3 text-right font-semibold">Ada Val R² (%)</th>
+                   <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J/m²/day)</th>
+                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J/m²/day)</th>
+                   <th className="px-4 py-3 text-right font-semibold">FI Val R² (%)</th>
+                   <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J/m²/day)</th>
                  </tr>
                </thead>
                <tbody>
@@ -490,10 +512,10 @@ export function GlobalModelAnalytics() {
                      <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
                      <td className="px-4 py-3 text-right">{formatExact(f.baseline_train_rmse, 3)}</td>
                      <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right">{formatRawR2(f.baseline_val_r2)}</td>
+                     <td className="px-4 py-3 text-right">{formatR2Percent(f.baseline_val_r2)}</td>
                      <td className="px-4 py-3 text-right">{formatExact(f.fi_train_rmse, 3)}</td>
                      <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
-                     <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatRawR2(f.fi_val_r2)}</td>
+                     <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatR2Percent(f.fi_val_r2)}</td>
                      <td className="px-4 py-3 text-right text-emerald-600">
                        ↓ {formatExact(f.baseline_val_rmse - f.fi_val_rmse, 3)}
                      </td>
@@ -503,10 +525,10 @@ export function GlobalModelAnalytics() {
                    <td className="px-4 py-3">Average</td>
                    <td className="px-4 py-3 text-right">—</td>
                    <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
-                   <td className="px-4 py-3 text-right">{formatRawR2(spatialCv.average.baseline_val_r2)}</td>
+                   <td className="px-4 py-3 text-right">{formatR2Percent(spatialCv.average.baseline_val_r2)}</td>
                    <td className="px-4 py-3 text-right">—</td>
                    <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
-                   <td className="px-4 py-3 text-right text-emerald-600">{formatRawR2(spatialCv.average.fi_val_r2)}</td>
+                   <td className="px-4 py-3 text-right text-emerald-600">{formatR2Percent(spatialCv.average.fi_val_r2)}</td>
                    <td className="px-4 py-3 text-right text-emerald-600">
                      ↓ {formatExact(spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse, 3)}
                    </td>
@@ -536,9 +558,9 @@ export function GlobalModelAnalytics() {
                <thead className="bg-slate-100 text-slate-700">
                  <tr>
                    <th className="px-4 py-3 text-left font-semibold">Domain</th>
-                   <th className="px-4 py-3 text-right font-semibold">DM Statistic</th>
-                   <th className="px-4 py-3 text-right font-semibold">p-value</th>
-                   <th className="px-4 py-3 text-right font-semibold">n</th>
+                   <th className="px-4 py-3 text-right font-semibold">DM Statistic (unitless)</th>
+                   <th className="px-4 py-3 text-right font-semibold">p-value (unitless)</th>
+                   <th className="px-4 py-3 text-right font-semibold">n (samples)</th>
                    <th className="px-4 py-3 text-left font-semibold">Significant?</th>
                    <th className="px-4 py-3 text-left font-semibold">Interpretation</th>
                  </tr>
@@ -585,7 +607,7 @@ export function GlobalModelAnalytics() {
                    <th className="px-4 py-3 text-left font-semibold">Model</th>
                    <th className="px-4 py-3 text-right font-semibold">RMSE (J/day)</th>
                    <th className="px-4 py-3 text-right font-semibold">MAE (J/day)</th>
-                   <th className="px-4 py-3 text-right font-semibold">R²</th>
+                   <th className="px-4 py-3 text-right font-semibold">R² (%)</th>
                    <th className="px-4 py-3 text-left font-semibold">Split</th>
                  </tr>
                </thead>
@@ -595,7 +617,7 @@ export function GlobalModelAnalytics() {
                      <td className="px-4 py-3 font-medium">{r.model}</td>
                      <td className="px-4 py-3 text-right">{r.rmse_j.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
                      <td className="px-4 py-3 text-right">{r.mae_j.toLocaleString('en-US', { maximumFractionDigits: 2 })}</td>
-                     <td className="px-4 py-3 text-right">{formatRawR2(r.r2)}</td>
+                     <td className="px-4 py-3 text-right">{formatR2Percent(r.r2)}</td>
                      <td className="px-4 py-3 text-xs text-slate-500">{r.split}</td>
                    </tr>
                  ))}
@@ -650,6 +672,11 @@ export function GlobalModelAnalytics() {
                  file: 'standalone_feature_importances.png',
                  caption: 'FI-AdaBoost Feature Importances',
                  description: 'Weighted feature importance averaged across all valid FI-AdaBoost boosting rounds. Higher bars contributed more to the FI-aware boosting decisions; compare with baseline to see how the weighting mechanism shifts feature reliance.',
+               },
+               {
+                 file: 'feature_importance_comparison.png',
+                 caption: 'Feature Importance Comparison',
+                 description: 'Side-by-side feature importance from the fitted Baseline AdaBoost and FI-AdaBoost models. Very small nonzero values are labelled with scientific notation so they do not appear as rounded zero.',
                },
                {
                  file: 'energy_distribution.png',
@@ -782,6 +809,4 @@ function EmptyState({ message }: { message: string }) {
    </div>
  );
 }
-
-
 
