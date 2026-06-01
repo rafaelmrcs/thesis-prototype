@@ -679,16 +679,6 @@ export function GlobalModelAnalytics() {
                  description: 'Side-by-side feature importance from the fitted Baseline AdaBoost and FI-AdaBoost models. Very small nonzero values are labelled with scientific notation so they do not appear as rounded zero.',
                },
                {
-                 file: 'sample_weight_update_comparison.png',
-                 caption: 'Sample Weight Update Comparison',
-                 description: 'First-iteration diagnostic showing the starting sample weights and updated weights for standard AdaBoost and FI-AdaBoost, highlighting that FI-AdaBoost changes the boosting reweighting behavior.',
-               },
-               {
-                 file: 'phi_vs_weight_change.png',
-                 caption: 'Phi_i vs Weight Change',
-                 description: 'Scatter plot of the FI-AdaBoost feature-importance influence score Phi_i against sample weight change. A visible pattern supports that feature importance affects the reweighting step.',
-               },
-               {
                  file: 'energy_distribution.png',
                  caption: 'Energy Distribution',
                  description: 'Per-building annual solar energy yield distribution across all 3,000 Davao City rooftops. The dashed line marks the mean yield; the spread reflects rooftop geometry and orientation diversity.',

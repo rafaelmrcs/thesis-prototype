@@ -936,202 +936,8 @@ def save_feature_importance_csv(uniform_baseline_vals, actual_baseline_vals, fi_
 
 
 # =============================================================================
-# WEIGHT-UPDATE DIAGNOSTICS
-# =============================================================================
-def _normalized_abs_error(y_true: np.ndarray, y_pred: np.ndarray) -> np.ndarray:
-    abs_e = np.abs(y_true - y_pred)
-    max_e = abs_e.max()
-    return abs_e / max_e if max_e > 0 else np.zeros_like(abs_e, dtype=float)
-
-
-def _beta_from_error(error: float) -> float:
-    # AdaBoost.R2 stops when error >= 0.5. For a diagnostic plot, clip just below
-    # that boundary so the first-round update remains numerically comparable.
-    safe_error = float(np.clip(error, 1e-12, 0.499999))
-    return safe_error / (1.0 - safe_error + 1e-10)
-
-
-def _normalize_weight_vector(weights: np.ndarray, fallback: np.ndarray) -> np.ndarray:
-    total = weights.sum()
-    return weights / total if total > 0 else fallback.copy()
-
-
-def compute_weight_update_diagnostics(
-    X_ada: np.ndarray,
-    X_fi: np.ndarray,
-    y: np.ndarray,
-    ada_params: dict,
-    fi_params: dict,
-) -> pd.DataFrame:
-    """
-    Capture one representative first boosting update for methodological proof.
-
-    Standard AdaBoost.R2 updates sample weights from normalized prediction error.
-    FI-AdaBoost updates sample weights from normalized error multiplied by Phi_i,
-    the per-sample feature-importance influence score used by this project.
-    """
-    X_ada = np.asarray(X_ada)
-    X_fi  = np.asarray(X_fi)
-    y_arr = np.asarray(y)
-    n     = len(y_arr)
-    before = np.full(n, 1.0 / n)
-
-    ada_rng = np.random.RandomState(RANDOM_SEED)
-    ada_idx = ada_rng.choice(np.arange(n), size=n, replace=True, p=before)
-    ada_tree = DecisionTreeRegressor(
-        max_depth=ada_params.get("max_depth", 3),
-        random_state=RANDOM_SEED,
-    )
-    ada_tree.fit(X_ada[ada_idx], y_arr[ada_idx])
-    ada_error = _normalized_abs_error(y_arr, ada_tree.predict(X_ada))
-    ada_eps   = float(np.dot(before, ada_error))
-    ada_beta  = _beta_from_error(ada_eps)
-    ada_after_raw = before * (
-        ada_beta ** ((1.0 - ada_error) * float(ada_params.get("learning_rate", 1.0)))
-    )
-    ada_after = _normalize_weight_vector(ada_after_raw, before)
-
-    fi_rng = np.random.default_rng(RANDOM_SEED)
-    fi_idx = fi_rng.choice(n, size=n, replace=True, p=before)
-    fi_tree = DecisionTreeRegressor(
-        max_depth=fi_params.get("max_depth", 4),
-        random_state=RANDOM_SEED,
-    )
-    fi_tree.fit(X_fi[fi_idx], y_arr[fi_idx])
-    fi_error = _normalized_abs_error(y_arr, fi_tree.predict(X_fi))
-    phi      = FIAdaBoostRegressor._norm_fi(fi_tree)
-    Phi_i    = FIAdaBoostRegressor._composite_phi(X_fi, phi)
-    fi_loss  = fi_error * Phi_i
-    fi_eps   = float(np.dot(before, fi_loss))
-    fi_beta  = _beta_from_error(fi_eps)
-    fi_after_raw = before * (fi_beta ** (1.0 - fi_loss))
-    fi_after = _normalize_weight_vector(fi_after_raw, before)
-
-    return pd.DataFrame({
-        "sample_index":                    np.arange(n),
-        "starting_weight":                 before,
-        "normalized_prediction_error":     fi_error,
-        "ada_normalized_prediction_error": ada_error,
-        "fi_normalized_prediction_error":  fi_error,
-        "adaboost_updated_weight":         ada_after,
-        "fi_adaboost_updated_weight":      fi_after,
-        "Phi_i":                           Phi_i,
-        "fi_modulated_loss":               fi_loss,
-        "adaboost_weight_change":          ada_after - before,
-        "fi_adaboost_weight_change":       fi_after - before,
-    })
-
-
-def save_weight_update_diagnostics_csv(weight_df: pd.DataFrame) -> str:
-    path = os.path.join(RESULTS_DIR, "sample_weight_update_diagnostics.csv")
-    weight_df.to_csv(path, index=False, float_format="%.12g")
-    return path
-
-
-def plot_sample_weight_update_comparison(weight_df: pd.DataFrame) -> None:
-    plot_df = weight_df.copy()
-    plot_df["max_abs_change"] = np.maximum(
-        plot_df["adaboost_weight_change"].abs(),
-        plot_df["fi_adaboost_weight_change"].abs(),
-    )
-    plot_df = (
-        plot_df.nlargest(40, "max_abs_change")
-        .sort_values("sample_index")
-        .reset_index(drop=True)
-    )
-    x = np.arange(len(plot_df))
-    width = 0.36
-
-    fig, axes = plt.subplots(1, 2, figsize=(15, 5), sharey=True)
-    for ax, after_col, color, title in [
-        (axes[0], "adaboost_updated_weight", C_ADA, "Standard AdaBoost"),
-        (axes[1], "fi_adaboost_updated_weight", C_FI, "FI-AdaBoost"),
-    ]:
-        ax.bar(
-            x - width / 2,
-            plot_df["starting_weight"],
-            width,
-            color="#94a3b8",
-            alpha=0.75,
-            label="Before update",
-        )
-        ax.bar(
-            x + width / 2,
-            plot_df[after_col],
-            width,
-            color=color,
-            alpha=0.85,
-            label="After update",
-        )
-        ax.set_title(title, fontsize=12, fontweight="bold")
-        ax.set_xlabel("Samples with largest absolute weight changes", fontsize=10)
-        ax.set_xticks([])
-        ax.grid(axis="y", linestyle="--", alpha=0.25)
-        ax.spines["top"].set_visible(False)
-        ax.spines["right"].set_visible(False)
-        ax.legend(fontsize=9)
-
-    axes[0].set_ylabel("Sample weight", fontsize=11)
-    fig.suptitle(
-        "Sample Weight Update Comparison Between AdaBoost and FI-AdaBoost",
-        fontsize=14,
-        fontweight="bold",
-    )
-    plt.tight_layout()
-    plt.savefig(
-        os.path.join(RESULTS_DIR, "sample_weight_update_comparison.png"),
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-
-
-def plot_phi_vs_weight_change(weight_df: pd.DataFrame) -> None:
-    fig, ax = plt.subplots(figsize=(9, 6))
-    points = ax.scatter(
-        weight_df["Phi_i"],
-        weight_df["fi_adaboost_weight_change"],
-        c=weight_df["fi_normalized_prediction_error"],
-        cmap="viridis",
-        alpha=0.65,
-        s=24,
-        edgecolors="none",
-    )
-    ax.axhline(0, color="#475569", linestyle="--", linewidth=1.2)
-    ax.set_title(
-        "Relationship Between Feature-Importance Score and Sample Weight Update",
-        fontsize=14,
-        fontweight="bold",
-    )
-    ax.set_xlabel("Feature-importance influence score, Phi_i", fontsize=11)
-    ax.set_ylabel("Change in sample weight after update", fontsize=11)
-    ax.grid(True, linestyle="--", alpha=0.25)
-    cbar = fig.colorbar(points, ax=ax)
-    cbar.set_label("Normalized prediction error", fontsize=10)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(
-        os.path.join(RESULTS_DIR, "phi_vs_weight_change.png"),
-        dpi=300,
-        bbox_inches="tight",
-    )
-    plt.close()
-
-
-# =============================================================================
 # PLOTS
 # =============================================================================
-def format_importance_percent(value: float) -> str:
-    """Format feature-importance labels without hiding tiny nonzero weights."""
-    pct = float(value) * 100.0
-    if pct == 0:
-        return "0%"
-    if abs(pct) < 0.0001:
-        return f"{pct:.2e}%"
-    return f"{pct:.4f}%"
-
-
 def plot_standalone_feature_importance(fi_vals, feats):
     plt.figure(figsize=(10, 6))
     labels     = [f.replace("_", " ").title() for f in feats]
@@ -1141,8 +947,7 @@ def plot_standalone_feature_importance(fi_vals, feats):
     bars       = plt.barh(sl, sv, color=C_FI, edgecolor="black", alpha=0.85)
     for bar, val in zip(bars, sv):
         plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 format_importance_percent(val),
-                 va="center", ha="left", fontsize=10, fontweight="bold")
+                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
     plt.title("FI-AdaBoost Feature Importance", fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
     plt.xlim(0, max(sv) + 0.1)
@@ -1162,8 +967,7 @@ def plot_standalone_baseline_feature_importance(ada_vals, feats):
     bars       = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
     for bar, val in zip(bars, sv):
         plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 format_importance_percent(val),
-                 va="center", ha="left", fontsize=10, fontweight="bold")
+                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
     plt.title("Baseline AdaBoost Feature Importance\n(No Feature Weighting — Uniform)", fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
     plt.xlim(0, max(sv) + 0.1)
@@ -1183,8 +987,7 @@ def plot_actual_baseline_feature_importance(ada_vals, feats):
     bars       = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
     for bar, val in zip(bars, sv):
         plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 format_importance_percent(val),
-                 va="center", ha="left", fontsize=10, fontweight="bold")
+                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
     plt.title("Actual Baseline AdaBoost Feature Importance\nGini-Based from Fitted AdaBoost Ensemble",
               fontsize=14, fontweight="bold")
     plt.xlabel("Relative Importance Weight", fontsize=12)
@@ -1193,74 +996,6 @@ def plot_actual_baseline_feature_importance(ada_vals, feats):
     plt.gca().spines["right"].set_visible(False)
     plt.tight_layout()
     plt.savefig(os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png"), dpi=300)
-    plt.close()
-
-
-def plot_feature_importance_comparison(actual_baseline_vals, fi_vals, feats):
-    actual_baseline_vals = np.asarray(actual_baseline_vals, dtype=float)
-    fi_vals              = np.asarray(fi_vals, dtype=float)
-    labels               = np.array([f.replace("_", " ").title() for f in feats])
-    idx                  = np.argsort(np.maximum(actual_baseline_vals, fi_vals))
-    baseline_sorted      = actual_baseline_vals[idx]
-    fi_sorted            = fi_vals[idx]
-    labels_sorted        = labels[idx]
-    y                    = np.arange(len(labels_sorted))
-    height               = 0.36
-    uniform_reference    = 1.0 / len(feats)
-
-    fig, ax = plt.subplots(figsize=(12, 7))
-    baseline_bars = ax.barh(
-        y - height / 2,
-        baseline_sorted,
-        height,
-        label="Actual Baseline AdaBoost",
-        color=C_ADA,
-        edgecolor="black",
-        alpha=0.85,
-    )
-    fi_bars = ax.barh(
-        y + height / 2,
-        fi_sorted,
-        height,
-        label="FI-AdaBoost",
-        color=C_FI,
-        edgecolor="black",
-        alpha=0.85,
-    )
-
-    for bars, values in [(baseline_bars, baseline_sorted), (fi_bars, fi_sorted)]:
-        for bar, val in zip(bars, values):
-            plt.text(
-                val + 0.005,
-                bar.get_y() + bar.get_height() / 2,
-                format_importance_percent(val),
-                va="center",
-                ha="left",
-                fontsize=9,
-                fontweight="bold",
-            )
-
-    ax.axvline(
-        uniform_reference,
-        color="#64748b",
-        linestyle="--",
-        linewidth=1.4,
-        label=f"Uniform reference ({uniform_reference * 100:.1f}%)",
-    )
-    ax.set_yticks(y)
-    ax.set_yticklabels(labels_sorted)
-    ax.set_title(
-        "Feature Importance Comparison\nActual Baseline AdaBoost vs FI-AdaBoost",
-        fontsize=14,
-        fontweight="bold",
-    )
-    ax.set_xlabel("Relative Importance Weight", fontsize=12)
-    ax.set_xlim(0, max(baseline_sorted.max(), fi_sorted.max(), uniform_reference) + 0.12)
-    ax.legend()
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "feature_importance_comparison.png"), dpi=300, bbox_inches="tight")
     plt.close()
 
 
@@ -1567,11 +1302,6 @@ def main():
     plot_standalone_baseline_feature_importance(uniform_imp, SHARED_FEATURES)
     plot_actual_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
-    plot_feature_importance_comparison(ada.feature_importances_, fi.feature_importances_, SHARED_FEATURES)
-    weight_df = compute_weight_update_diagnostics(X_tr_ada, X_tr_fi, y_tr, ada_params, fi_params)
-    p_weight_diag = save_weight_update_diagnostics_csv(weight_df)
-    plot_sample_weight_update_comparison(weight_df)
-    plot_phi_vs_weight_change(weight_df)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
     plot_metrics_comparison(ada_test_m, fi_test_m)
@@ -1586,13 +1316,9 @@ def main():
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
         ("CSV",   p_feature_importance),
-        ("CSV",   p_weight_diag),
         ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
-        ("Plot",  os.path.join(RESULTS_DIR, "feature_importance_comparison.png")),
-        ("Plot",  os.path.join(RESULTS_DIR, "sample_weight_update_comparison.png")),
-        ("Plot",  os.path.join(RESULTS_DIR, "phi_vs_weight_change.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "metrics_comparison.png")),
