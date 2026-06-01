@@ -512,7 +512,7 @@ def _tune_timeseries(model_cls, space_fn, X_train: np.ndarray, y_train: np.ndarr
 def run_kfold_cv(X_train_ada: np.ndarray, X_train_fi: np.ndarray,
                  y_train: np.ndarray,
                  ada_params: dict, fi_params: dict, n_splits: int = 5) -> pd.DataFrame:
-    """KFold CV with tuned hyperparams — saves per-fold metrics including Train vs Val."""
+    """KFold CV with tuned hyperparams — saves per-fold Train vs Val RMSE, MAE, and R²."""
     kf   = KFold(n_splits=n_splits, shuffle=True, random_state=RANDOM_SEED)
     rows = []
     for fold, (tr_idx, val_idx) in enumerate(kf.split(y_train), start=1):
@@ -530,11 +530,15 @@ def run_kfold_cv(X_train_ada: np.ndarray, X_train_fi: np.ndarray,
         rows.append({
             "fold":             fold,
             "ada_train_RMSE_J": ada_train_m["RMSE_J"],
+            "ada_train_MAE_J":  ada_train_m["MAE_J"],
             "ada_val_RMSE_J":   ada_val_m["RMSE_J"],
+            "ada_val_MAE_J":    ada_val_m["MAE_J"],
             "ada_train_R2":     ada_train_m["R2"],
             "ada_val_R2":       ada_val_m["R2"],
             "fi_train_RMSE_J":  fi_train_m["RMSE_J"],
+            "fi_train_MAE_J":   fi_train_m["MAE_J"],
             "fi_val_RMSE_J":    fi_val_m["RMSE_J"],
+            "fi_val_MAE_J":     fi_val_m["MAE_J"],
             "fi_train_R2":      fi_train_m["R2"],
             "fi_val_R2":        fi_val_m["R2"],
         })
@@ -544,6 +548,46 @@ def run_kfold_cv(X_train_ada: np.ndarray, X_train_fi: np.ndarray,
 def save_cv_metrics(cv_df: pd.DataFrame) -> str:
     path = os.path.join(RESULTS_DIR, "cv_fold_metrics.csv")
     cv_df.to_csv(path, index=False)
+    return path
+
+
+def _hyperparameter_row(
+    *,
+    pipeline: str,
+    model: str,
+    params: dict,
+    target: str,
+    features: list,
+    cv_method: str,
+    n_trials: int = 100,
+    n_splits: int = 5,
+) -> dict:
+    """Build one reproducibility row for the tuned hyperparameters CSV."""
+    return {
+        "pipeline":         pipeline,
+        "model":            model,
+        "tuning_method":    "Optuna TPE",
+        "cv_method":        cv_method,
+        "n_trials":         n_trials,
+        "n_splits":         n_splits,
+        "objective_metric": "mean_validation_RMSE_J",
+        "target":           target,
+        "target_unit":      "J/m2/day",
+        "features":         ",".join(features),
+        "random_seed":      RANDOM_SEED,
+        "n_estimators":     params.get("n_estimators"),
+        "learning_rate":    params.get("learning_rate"),
+        "max_depth":        params.get("max_depth"),
+    }
+
+
+def save_hyperparameters_csv(rows: list[dict], append: bool = False) -> str:
+    path = os.path.join(RESULTS_DIR, "hyperparameters_used.csv")
+    df = pd.DataFrame(rows)
+    if append and os.path.exists(path):
+        existing = pd.read_csv(path)
+        df = pd.concat([existing, df], ignore_index=True)
+    df.to_csv(path, index=False)
     return path
 
 
@@ -731,6 +775,28 @@ def run_daily_pipeline() -> None:
     fi_params = _tune_timeseries(FIAdaBoostRegressor, _fi_space, X_tr, y_tr)
     print(f"  Best: {fi_params}")
 
+    p_hyper = save_hyperparameters_csv(
+        [
+            _hyperparameter_row(
+                pipeline="daily_temporal",
+                model="AdaBoost (Daily, Temporal Split)",
+                params=ada_params,
+                target=DAILY_TARGET,
+                features=DAILY_FEATURES,
+                cv_method="TimeSeriesSplit",
+            ),
+            _hyperparameter_row(
+                pipeline="daily_temporal",
+                model="FI-AdaBoost (Daily, Temporal Split)",
+                params=fi_params,
+                target=DAILY_TARGET,
+                features=DAILY_FEATURES,
+                cv_method="TimeSeriesSplit",
+            ),
+        ],
+        append=True,
+    )
+
     # CV fold metrics (Fix 4 — TimeSeriesSplit)
     tscv    = TimeSeriesSplit(n_splits=5)
     cv_rows = []
@@ -799,6 +865,7 @@ def run_daily_pipeline() -> None:
     print(f"\n  Saved: {p_daily}")
     print(f"  Saved: {p_cv}")
     print(f"  Saved: {p_dm}")
+    print(f"  Saved: {p_hyper}")
 
 
 # =============================================================================
@@ -834,6 +901,29 @@ def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     )
     path = os.path.join(RESULTS_DIR, "forecast_per_building.csv")
     merged.to_csv(path, index=False)
+    return path
+
+
+def save_feature_importance_csv(baseline_vals, fi_vals, feats) -> str:
+    """Save exact feature-importance values used by the feature-importance PNGs."""
+    rows = []
+    for feat, baseline_val, fi_val in zip(feats, baseline_vals, fi_vals):
+        rows.append({
+            "feature":                       feat,
+            "baseline_source":               "uniform_no_feature_weighting_reference",
+            "baseline_importance_weight":    float(baseline_val),
+            "baseline_importance_percent":   float(baseline_val) * 100,
+            "fi_source":                     "fi_adaboost_feature_importances_",
+            "fi_importance_weight":          float(fi_val),
+            "fi_importance_percent":         float(fi_val) * 100,
+        })
+
+    df = pd.DataFrame(rows)
+    df["fi_rank"] = df["fi_importance_weight"].rank(
+        ascending=False, method="min"
+    ).astype(int)
+    path = os.path.join(RESULTS_DIR, "feature_importance_comparison.csv")
+    df.to_csv(path, index=False, float_format="%.12g")
     return path
 
 
@@ -1073,6 +1163,29 @@ def main():
     fi_params = _tune_kfold(FIAdaBoostRegressor, _fi_space, X_tr_fi, y_tr)
     print(f"  Best FI-AdaBoost params: {fi_params}")
 
+    p_hyper = save_hyperparameters_csv(
+        [
+            _hyperparameter_row(
+                pipeline="spatial_rooftop",
+                model="AdaBoost (Baseline)",
+                params=ada_params,
+                target=TARGET_COL,
+                features=BASELINE_FEATURES,
+                cv_method="KFold",
+            ),
+            _hyperparameter_row(
+                pipeline="spatial_rooftop",
+                model="FI-AdaBoost (Proposed)",
+                params=fi_params,
+                target=TARGET_COL,
+                features=FI_FEATURES,
+                cv_method="KFold",
+            ),
+        ],
+        append=False,
+    )
+    print(f"  Saved tuned hyperparameters: {p_hyper}")
+
     # ── [4] KFold CV metrics (Fix 4) ───────────────────────────────────────────
     print("\n[4/6] KFold CV Metrics …")
     cv_df = run_kfold_cv(X_tr_ada, X_tr_fi, y_tr, ada_params, fi_params)
@@ -1154,6 +1267,9 @@ def main():
     p_dm       = save_dm_results(dm, suffix="spatial")
 
     uniform_imp = np.ones(len(SHARED_FEATURES)) / len(SHARED_FEATURES)
+    p_feature_importance = save_feature_importance_csv(
+        uniform_imp, fi.feature_importances_, SHARED_FEATURES
+    )
     plot_standalone_baseline_feature_importance(uniform_imp, SHARED_FEATURES)
     plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
@@ -1165,9 +1281,11 @@ def main():
 
     saved = [
         ("CSV",   os.path.join(RESULTS_DIR, "train_test_split_info.csv")),
+        ("CSV",   p_hyper),
         ("CSV",   p_metrics),
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
+        ("CSV",   p_feature_importance),
         ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),

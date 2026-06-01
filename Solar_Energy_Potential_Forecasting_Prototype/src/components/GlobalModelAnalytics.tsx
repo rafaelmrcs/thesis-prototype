@@ -379,10 +379,10 @@ export function GlobalModelAnalytics() {
                        <Tooltip formatter={(v: number | string) => formatPercent(Number(v), 6)} />
                        <Legend />
                        <Bar dataKey="baseline" name="Baseline AdaBoost" fill="#3b82f6" radius={[8, 8, 0, 0]}>
-                         <LabelList dataKey="baseline" position="top" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
+                         <LabelList dataKey="baseline" position="insideTop" offset={8} formatter={(v: number) => formatPercent(v, 4)} fill="#ffffff" fontSize={12} fontWeight={700} />
                        </Bar>
                        <Bar dataKey="fiAdaBoost" name="FI-AdaBoost" fill="#f97316" radius={[8, 8, 0, 0]}>
-                         <LabelList dataKey="fiAdaBoost" position="top" formatter={(v: number) => formatPercent(v, 4)} fill="#334155" fontSize={12} />
+                         <LabelList dataKey="fiAdaBoost" position="insideTop" offset={8} formatter={(v: number) => formatPercent(v, 4)} fill="#ffffff" fontSize={12} fontWeight={700} />
                        </Bar>
                      </BarChart>
                    </ResponsiveContainer>
@@ -809,4 +809,3 @@ function EmptyState({ message }: { message: string }) {
    </div>
  );
 }
-
