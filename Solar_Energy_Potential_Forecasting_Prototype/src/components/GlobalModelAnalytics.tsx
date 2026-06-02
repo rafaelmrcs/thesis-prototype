@@ -864,11 +864,6 @@ export function GlobalModelAnalytics() {
 	                 description: 'Explicit feature-weight proof artifact showing the FI-AdaBoost weights used by the feature-aware boosting mechanism.',
 	               },
 	               {
-	                 file: 'weight_update_behavior.png',
-	                 caption: 'Figure 20: Comparison of Weight Update Behavior',
-	                 description: 'Weight-update proof artifact showing that AdaBoost excludes Phi from its update formula, while FI-AdaBoost includes Phi in the feature-aware update rule.',
-	               },
-	               {
 	                 file: 'energy_distribution.png',
 	                 caption: 'Energy Distribution',
                  description: 'Per-building annual solar energy yield distribution across all 3,000 Davao City rooftops. The dashed line marks the mean yield; the spread reflects rooftop geometry and orientation diversity.',
