@@ -170,8 +170,6 @@ interface FeatureWeightRow {
 interface FeatureWeightsData {
 	 weights: FeatureWeightRow[];
 	 source_file: string;
-	 baseline_weights: FeatureWeightRow[];
-	 baseline_source_file: string;
 }
 
 
@@ -351,17 +349,6 @@ export function GlobalModelAnalytics() {
 
 	 const featureWeightChartData =
 	   featureWeights?.weights.map((item) => ({
-	     rank: item.rank,
-	     feature: formatFeatureName(item.feature),
-	     rawFeature: item.feature,
-	     weight: item.feature_weight,
-	     percent: item.feature_weight_percent,
-	     source: item.source,
-	   })) ?? [];
-
-
-	 const baselineFeatureWeightChartData =
-	   featureWeights?.baseline_weights.map((item) => ({
 	     rank: item.rank,
 	     feature: formatFeatureName(item.feature),
 	     rawFeature: item.feature,
@@ -641,51 +628,12 @@ export function GlobalModelAnalytics() {
 	       <CardHeader>
 	         <CardTitle className="text-2xl">Feature Weight Importance</CardTitle>
 	         <CardDescription>
-	           Ranked actual fitted baseline AdaBoost weights and FI-AdaBoost weights served from <code>results/</code>.
+	           FI-AdaBoost feature-aware weights served from <code>results/feature_weight_importance.csv</code>.
 	         </CardDescription>
 	       </CardHeader>
 	       <CardContent>
 	         {featureWeights ? (
-	           <div className="space-y-8">
-	             <section>
-	               <div className="mb-3">
-	                 <h3 className="text-lg font-semibold">Baseline AdaBoost Feature Weight Importance</h3>
-	                 <p className="text-sm text-slate-500">
-	                   Actual fitted AdaBoost feature weights from <code>results/{featureWeights.baseline_source_file}</code>.
-	                 </p>
-	               </div>
-	               <div className="rounded-xl border border-slate-200 bg-white p-4 shadow-sm">
-	                 <ResponsiveContainer width="100%" height={380}>
-	                   <BarChart
-	                     data={baselineFeatureWeightChartData}
-	                     layout="vertical"
-	                     margin={{ top: 12, right: 84, left: 12, bottom: 12 }}
-	                   >
-	                     <CartesianGrid strokeDasharray="3 3" stroke="#e5e7eb" />
-	                     <XAxis
-	                       type="number"
-	                       stroke="#64748b"
-	                       tickFormatter={(v: number) => formatPercent(v * 100, 0)}
-	                       domain={[0, (dataMax: number) => Math.max(dataMax * 1.15, 0.05)]}
-	                     />
-	                     <YAxis
-	                       dataKey="feature"
-	                       type="category"
-	                       stroke="#64748b"
-	                       width={170}
-	                       tick={{ fontSize: 11 }}
-	                     />
-	                     <Tooltip
-	                       formatter={(v: number | string) => formatSmallPercent(Number(v) * 100, 6)}
-	                       labelFormatter={(label: string | number) => String(label)}
-	                     />
-	                     <Bar dataKey="weight" name="Baseline feature weight" fill="#3b82f6" radius={[0, 6, 6, 0]}>
-	                       <LabelList dataKey="percent" position="right" formatter={(v: number) => formatSmallPercent(v, 4)} fill="#334155" fontSize={12} />
-	                     </Bar>
-	                   </BarChart>
-	                 </ResponsiveContainer>
-	               </div>
-	             </section>
+	           <div>
 	             <section>
 	               <div className="mb-3">
 	                 <h3 className="text-lg font-semibold">FI-AdaBoost Feature Weight Importance</h3>
@@ -853,11 +801,6 @@ export function GlobalModelAnalytics() {
                  caption: 'Overfit Check (Train vs Test)',
                  description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
                },
-	               {
-	                 file: 'baseline_feature_weight_importance.png',
-	                 caption: 'Baseline AdaBoost Feature Weight Importance',
-	                 description: 'Actual fitted baseline AdaBoost feature weights exported from the training run for direct comparison against FI-AdaBoost feature-aware weights.',
-	               },
 	               {
 	                 file: 'feature_weight_importance.png',
 	                 caption: 'FI-AdaBoost Feature Weight Importance',
