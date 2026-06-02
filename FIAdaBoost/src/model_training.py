@@ -466,11 +466,15 @@ def run_kfold_cv(X_train_ada: np.ndarray, X_train_fi: np.ndarray,
         rows.append({
             "fold":             fold,
             "ada_train_RMSE_J": ada_train_m["RMSE_J"],
+            "ada_train_MAE_J":  ada_train_m["MAE_J"],
             "ada_val_RMSE_J":   ada_val_m["RMSE_J"],
+            "ada_val_MAE_J":    ada_val_m["MAE_J"],
             "ada_train_R2":     ada_train_m["R2"],
             "ada_val_R2":       ada_val_m["R2"],
             "fi_train_RMSE_J":  fi_train_m["RMSE_J"],
+            "fi_train_MAE_J":   fi_train_m["MAE_J"],
             "fi_val_RMSE_J":    fi_val_m["RMSE_J"],
+            "fi_val_MAE_J":     fi_val_m["MAE_J"],
             "fi_train_R2":      fi_train_m["R2"],
             "fi_val_R2":        fi_val_m["R2"],
         })
@@ -481,6 +485,36 @@ def save_cv_metrics(cv_df: pd.DataFrame) -> str:
     path = os.path.join(RESULTS_DIR, "cv_fold_metrics.csv")
     cv_df.to_csv(path, index=False)
     return path
+
+
+def _hyperparameter_row(
+    *,
+    pipeline: str,
+    model: str,
+    params: dict,
+    target: str,
+    features: list,
+    cv_method: str,
+    n_trials: int = 100,
+    n_splits: int = 5,
+) -> dict:
+    """Build one reproducibility row for the tuned hyperparameters CSV."""
+    return {
+        "pipeline": pipeline,
+        "model": model,
+        "tuning_method": "Optuna TPE",
+        "cv_method": cv_method,
+        "n_trials": n_trials,
+        "n_splits": n_splits,
+        "objective_metric": "mean_validation_RMSE_J",
+        "target": target,
+        "target_unit": "J/m2/day",
+        "features": ",".join(features),
+        "random_seed": RANDOM_SEED,
+        "n_estimators": params.get("n_estimators"),
+        "learning_rate": params.get("learning_rate"),
+        "max_depth": params.get("max_depth"),
+    }
 
 
 # =============================================================================
@@ -659,6 +693,30 @@ def run_daily_pipeline() -> None:
     fi_params = {'n_estimators': 100, 'learning_rate': 1.5, 'max_depth': 5}
     print(f"  Best: {fi_params}")
 
+    p_hyper = save_hyperparameters_csv(
+        [
+            _hyperparameter_row(
+                pipeline="daily_temporal",
+                model="AdaBoost (Daily, Temporal Split)",
+                params=ada_params,
+                target=DAILY_TARGET,
+                features=DAILY_FEATURES,
+                cv_method="TimeSeriesSplit",
+                n_trials=50,
+            ),
+            _hyperparameter_row(
+                pipeline="daily_temporal",
+                model="FI-AdaBoost (Daily, Temporal Split)",
+                params=fi_params,
+                target=DAILY_TARGET,
+                features=DAILY_FEATURES,
+                cv_method="TimeSeriesSplit",
+                n_trials=50,
+            ),
+        ],
+        append=True,
+    )
+
     # CV fold metrics (Fix 4 — TimeSeriesSplit)
     tscv    = TimeSeriesSplit(n_splits=5)
     cv_rows = []
@@ -727,6 +785,7 @@ def run_daily_pipeline() -> None:
     print(f"\n  Saved: {p_daily}")
     print(f"  Saved: {p_cv}")
     print(f"  Saved: {p_dm}")
+    print(f"  Saved: {p_hyper}")
 
 
 # =============================================================================
@@ -756,47 +815,150 @@ def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     return path
 
 
+def save_hyperparameters_csv(rows: list[dict], append: bool = False) -> str:
+    path = os.path.join(RESULTS_DIR, "hyperparameters_used.csv")
+    df = pd.DataFrame(rows)
+    if append and os.path.exists(path):
+        existing = pd.read_csv(path)
+        df = pd.concat([existing, df], ignore_index=True)
+    df.to_csv(path, index=False)
+    return path
+
+
+def save_feature_weight_csv(fi_vals, feats) -> str:
+    order = np.argsort(fi_vals)[::-1]
+    rows = []
+    for rank, idx in enumerate(order, start=1):
+        weight = float(fi_vals[idx])
+        rows.append({
+            "rank": rank,
+            "feature": str(feats[idx]),
+            "fi_feature_weight": weight,
+            "fi_feature_weight_percent": weight * 100,
+            "source": "fi_adaboost_feature_importances_",
+        })
+
+    path = os.path.join(RESULTS_DIR, "feature_weight_importance.csv")
+    pd.DataFrame(rows).to_csv(path, index=False, float_format="%.12g")
+    return path
+
+
+def save_baseline_feature_weight_csv(ada_vals, feats) -> str:
+    order = np.argsort(ada_vals)[::-1]
+    rows = []
+    for rank, idx in enumerate(order, start=1):
+        weight = float(ada_vals[idx])
+        rows.append({
+            "rank": rank,
+            "feature": str(feats[idx]),
+            "baseline_feature_weight": weight,
+            "baseline_feature_weight_percent": weight * 100,
+            "source": "ada_feature_importances_",
+        })
+
+    path = os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.csv")
+    pd.DataFrame(rows).to_csv(path, index=False, float_format="%.12g")
+    return path
+
+
+def save_feature_importance_comparison_csv(ada_vals, ada_feats, fi_vals, fi_feats) -> str:
+    ada_map = {feat: float(val) for feat, val in zip(ada_feats, ada_vals)}
+    fi_map = {feat: float(val) for feat, val in zip(fi_feats, fi_vals)}
+    ada_rank = {
+        feat: rank
+        for rank, (feat, _) in enumerate(
+            sorted(ada_map.items(), key=lambda item: -item[1]), start=1
+        )
+    }
+    fi_rank = {
+        feat: rank
+        for rank, (feat, _) in enumerate(
+            sorted(fi_map.items(), key=lambda item: -item[1]), start=1
+        )
+    }
+    features = list(dict.fromkeys(list(fi_feats) + list(ada_feats)))
+    rows = []
+    for feat in features:
+        ada_weight = ada_map.get(feat, 0.0)
+        fi_weight = fi_map.get(feat, 0.0)
+        rows.append({
+            "feature": feat,
+            "actual_baseline_source": (
+                "ada_feature_importances_"
+                if feat in ada_map else "not_used_by_baseline_model"
+            ),
+            "actual_baseline_importance_weight": ada_weight,
+            "actual_baseline_importance_percent": ada_weight * 100,
+            "actual_baseline_rank": ada_rank.get(feat, ""),
+            "fi_source": "fi_adaboost_feature_importances_",
+            "fi_importance_weight": fi_weight,
+            "fi_importance_percent": fi_weight * 100,
+            "fi_rank": fi_rank.get(feat, ""),
+        })
+
+    path = os.path.join(RESULTS_DIR, "feature_importance_comparison.csv")
+    pd.DataFrame(rows).sort_values(
+        "fi_importance_weight", ascending=False
+    ).to_csv(path, index=False, float_format="%.12g")
+    return path
+
+
 # =============================================================================
 # PLOTS
 # =============================================================================
-def plot_standalone_feature_importance(fi_vals, feats):
+def _plot_feature_importance_bars(vals, feats, filename: str, title: str, xlabel: str, color: str):
+    vals = np.asarray(vals, dtype=float)
+    labels = [f.replace("_", " ").title() for f in feats]
+    idx = np.argsort(vals)
+    sv = vals[idx]
+    sl = np.array(labels)[idx]
+
     plt.figure(figsize=(10, 6))
-    labels     = [f.replace("_", " ").title() for f in feats]
-    idx        = np.argsort(fi_vals)
-    sv         = fi_vals[idx]
-    sl         = np.array(labels)[idx]
-    bars       = plt.barh(sl, sv, color=C_FI, edgecolor="black", alpha=0.85)
+    bars = plt.barh(sl, sv, color=color, edgecolor="black", alpha=0.85)
+    max_val = float(max(sv)) if len(sv) else 0.0
+    label_pad = max(max_val * 0.01, 0.001)
     for bar, val in zip(bars, sv):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("FI-AdaBoost Feature Importance", fontsize=14, fontweight="bold")
-    plt.xlabel("Relative Importance Weight", fontsize=12)
-    plt.xlim(0, max(sv) + 0.1)
+        plt.text(val + label_pad, bar.get_y() + bar.get_height() / 2,
+                 f"{val * 100:.4f}%", va="center", ha="left",
+                 fontsize=10, fontweight="bold")
+    plt.title(title, fontsize=14, fontweight="bold")
+    plt.xlabel(xlabel, fontsize=12)
+    plt.xlim(0, max_val + max(max_val * 0.12, 0.02))
     plt.gca().spines["top"].set_visible(False)
     plt.gca().spines["right"].set_visible(False)
     plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "standalone_feature_importances.png"), dpi=300)
+    plt.savefig(os.path.join(RESULTS_DIR, filename), dpi=300, bbox_inches="tight")
     plt.close()
+
+
+def plot_standalone_feature_importance(fi_vals, feats):
+    _plot_feature_importance_bars(
+        fi_vals, feats, "standalone_feature_importances.png",
+        "FI-AdaBoost Feature Importance", "Relative Importance Weight", C_FI,
+    )
 
 
 def plot_standalone_baseline_feature_importance(ada_vals, feats):
-    plt.figure(figsize=(10, 6))
-    labels = [f.replace("_", " ").title() for f in feats]
-    idx    = np.argsort(ada_vals)
-    sv     = ada_vals[idx]
-    sl     = np.array(labels)[idx]
-    bars   = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
-    for bar, val in zip(bars, sv):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("Baseline AdaBoost Feature Importance", fontsize=14, fontweight="bold")
-    plt.xlabel("Relative Importance Weight", fontsize=12)
-    plt.xlim(0, max(sv) + 0.1)
-    plt.gca().spines["top"].set_visible(False)
-    plt.gca().spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "baseline_feature_importances.png"), dpi=300)
-    plt.close()
+    _plot_feature_importance_bars(
+        ada_vals, feats, "baseline_feature_importances.png",
+        "Baseline AdaBoost Feature Importance", "Relative Importance Weight", C_ADA,
+    )
+
+
+def plot_feature_weight_importance(fi_vals, feats):
+    _plot_feature_importance_bars(
+        fi_vals, feats, "feature_weight_importance.png",
+        "FI-AdaBoost Feature Weight Importance\nProof of Feature-Aware Weighting",
+        "Feature Weight Used by FI-AdaBoost", C_FI,
+    )
+
+
+def plot_baseline_feature_weight_importance(ada_vals, feats):
+    _plot_feature_importance_bars(
+        ada_vals, feats, "baseline_feature_weight_importance.png",
+        "Baseline AdaBoost Feature Weight Importance\nActual Fitted AdaBoost Feature Importances",
+        "Feature Weight from Fitted AdaBoost", C_ADA,
+    )
 
 
 def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
@@ -969,9 +1131,8 @@ def main():
         "random_seed":    RANDOM_SEED,
         "target_col":     TARGET_COL,
     }]
-    pd.DataFrame(split_info).to_csv(
-        os.path.join(RESULTS_DIR, "train_test_split_info.csv"), index=False
-    )
+    p_split = os.path.join(RESULTS_DIR, "train_test_split_info.csv")
+    pd.DataFrame(split_info).to_csv(p_split, index=False)
 
     X_tr_ada = train_df[BASELINE_FEATURES].values.astype(float)
     X_te_ada = test_df[BASELINE_FEATURES].values.astype(float)
@@ -992,10 +1153,33 @@ def main():
     fi_params = {'n_estimators': 141, 'learning_rate': 0.63, 'max_depth': 4}
     print(f"  FI-AdaBoost params: {fi_params}")
 
+    p_hparams = save_hyperparameters_csv(
+        [
+            _hyperparameter_row(
+                pipeline="spatial_rooftop",
+                model="AdaBoost (Baseline)",
+                params=ada_params,
+                target=TARGET_COL,
+                features=BASELINE_FEATURES,
+                cv_method="KFold",
+            ),
+            _hyperparameter_row(
+                pipeline="spatial_rooftop",
+                model="FI-AdaBoost (Proposed)",
+                params=fi_params,
+                target=TARGET_COL,
+                features=FI_FEATURES,
+                cv_method="KFold",
+            ),
+        ],
+        append=False,
+    )
+    print(f"  Saved tuned hyperparameters: {p_hparams}")
+
     # ── [4] KFold CV metrics (Fix 4) ───────────────────────────────────────────
     print("\n[4/6] KFold CV Metrics …")
     cv_df = run_kfold_cv(X_tr_ada, X_tr_fi, y_tr, ada_params, fi_params)
-    save_cv_metrics(cv_df)
+    p_cv = save_cv_metrics(cv_df)
 
     print("  Fold metrics (Validation):")
     for _, r in cv_df.iterrows():
@@ -1036,7 +1220,7 @@ def main():
     dm = diebold_mariano_test(y_te - ada_te, y_te - fi_te)
 
     print("\n  Baseline AdaBoost Feature Importances:")
-    for feat, imp in sorted(zip(SHARED_FEATURES, ada.feature_importances_), key=lambda x: -x[1]):
+    for feat, imp in sorted(zip(BASELINE_FEATURES, ada.feature_importances_), key=lambda x: -x[1]):
         print(f"    {feat:<25}: {imp * 100:.4f}%")
 
     print("\n  FI-AdaBoost Feature Importances (Fix 6 — raw, no log transform):")
@@ -1067,9 +1251,17 @@ def main():
     p_metrics  = save_metrics_csv(ada_test_m, fi_test_m)
     p_forecast = save_forecast_csv(ada_fcast, fi_fcast)
     p_dm       = save_dm_results(dm, suffix="spatial")
+    p_compare  = save_feature_importance_comparison_csv(
+        ada.feature_importances_, BASELINE_FEATURES,
+        fi.feature_importances_, FI_FEATURES,
+    )
+    p_base_wt  = save_baseline_feature_weight_csv(ada.feature_importances_, BASELINE_FEATURES)
+    p_fi_wt    = save_feature_weight_csv(fi.feature_importances_, FI_FEATURES)
 
-    plot_standalone_baseline_feature_importance(ada.feature_importances_, SHARED_FEATURES)
-    plot_standalone_feature_importance(fi.feature_importances_, SHARED_FEATURES)
+    plot_standalone_baseline_feature_importance(ada.feature_importances_, BASELINE_FEATURES)
+    plot_standalone_feature_importance(fi.feature_importances_, FI_FEATURES)
+    plot_baseline_feature_weight_importance(ada.feature_importances_, BASELINE_FEATURES)
+    plot_feature_weight_importance(fi.feature_importances_, FI_FEATURES)
     plot_actual_vs_predicted(y_te, ada_te, y_te, fi_te)
     plot_residuals(y_te, ada_te, y_te, fi_te)
     plot_metrics_comparison(ada_test_m, fi_test_m)
@@ -1078,12 +1270,19 @@ def main():
     plot_overfit_check(ada_train_m, ada_test_m, fi_train_m, fi_test_m)
 
     saved = [
-        ("CSV",   os.path.join(RESULTS_DIR, "train_test_split_info.csv")),
+        ("CSV",   p_split),
+        ("CSV",   p_cv),
         ("CSV",   p_metrics),
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
+        ("CSV",   p_hparams),
+        ("CSV",   p_compare),
+        ("CSV",   p_base_wt),
+        ("CSV",   p_fi_wt),
         ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_importances.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "standalone_feature_importances.png")),
+        ("Plot",  os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.png")),
+        ("Plot",  os.path.join(RESULTS_DIR, "feature_weight_importance.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "actual_vs_predicted.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "residuals.png")),
         ("Plot",  os.path.join(RESULTS_DIR, "metrics_comparison.png")),
