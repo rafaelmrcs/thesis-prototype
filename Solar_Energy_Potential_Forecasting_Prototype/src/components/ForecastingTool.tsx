@@ -559,9 +559,22 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
         </CardHeader>
         {showGuide && (
           <CardContent className="space-y-5 text-sm text-gray-700 pt-0">
-            {/* A. Pinning a Location */}
+            {/* A. Prototype Overview */}
             <div>
-              <p className="font-semibold text-gray-800 mb-1">A. Pinning a Location</p>
+              <p className="font-semibold text-gray-800 mb-1">A. Prototype Overview</p>
+              <div className="space-y-2 text-xs leading-relaxed text-gray-600">
+                <p>
+                  Solar Energy Potential Forecasting estimates the theoretical sunlight energy available on rooftops in Davao City using FI-AdaBoost. It does not compute actual PV electricity output because panel efficiency, inverter losses, panel layout, and installation constraints are outside the study scope.
+                </p>
+                <p>
+                  Live inputs come from OpenStreetMap/Overpass for rooftop geometry, NASA POWER for solar and weather context, and pvlib for clear-sky and sunshine-hour estimates.
+                </p>
+              </div>
+            </div>
+
+            {/* B. Pinning a Location */}
+            <div>
+              <p className="font-semibold text-gray-800 mb-1">B. Pinning a Location</p>
               <ul className="space-y-1 list-disc list-inside text-xs text-gray-600">
                 <li>Search an address — results are filtered to Davao City bounds.</li>
                 <li>Type decimal coordinates inside Davao City in <span className="font-mono bg-amber-100 px-1 rounded">lat, lng</span> format (e.g. <span className="font-mono bg-amber-100 px-1 rounded">7.0731, 125.6128</span>) and press Enter.</li>
@@ -569,14 +582,14 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
               </ul>
             </div>
 
-            {/* B. What the Prediction Shows */}
+            {/* C. What the Prediction Shows */}
             <div>
-              <p className="font-semibold text-gray-800 mb-2">B. What the Prediction Shows</p>
+              <p className="font-semibold text-gray-800 mb-2">C. What the Prediction Shows</p>
               <div className="space-y-2 text-xs">
                 {[
-                  ['Solar Energy Potential (SEP)', 'Predicted irradiance × detected rooftop area in kWh/day. Theoretical incident solar energy — not usable electricity output.'],
-                  ['Irradiance Resource Level', 'Predicted GHI expressed as % of the 7 kWh/m²/day practical maximum. Excellent ≥ 5.5 · Very Good ≥ 4.5 · Good ≥ 3.5 · Fair < 3.5 kWh/m²/day.'],
-                  ['Solar Exposure Index (SEI)', 'Composite 0–1 score derived from rooftop area, orientation, and local clearness. Used directly as a training feature.'],
+                  ['Solar Energy Potential (SEP)', 'Predicted irradiance (kWh/m²/day) × detected rooftop area (m²) = theoretical rooftop solar energy in kWh/day.'],
+                  ['Irradiance Resource Level', 'Predicted GHI ÷ 7 kWh/m²/day × 100. Ratings use the irradiance thresholds: Excellent ≥ 5.5, Very Good ≥ 4.5, Good ≥ 3.5, Fair < 3.5 kWh/m²/day.'],
+                  ['Solar Exposure Index (SEI)', 'Normalized exposure score from rooftop area × orientation score × (1 − shading factor) × tilt factor. Used directly as a training feature.'],
                   ['Azimuth', 'Compass bearing of the building\'s longest edge. 0° = North, 90° = East, 180° = South, 270° = West.'],
                   ['Clear-Sky Ratio', 'Actual GHI ÷ pvlib Ineichen theoretical clear-sky GHI. Values near 1.0 indicate mostly clear conditions year-round.'],
                 ].map(([term, def]) => (
@@ -588,7 +601,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
               </div>
             </div>
 
-            {/* C. Scope & Assumptions */}
+            {/* D. Scope & Assumptions */}
             <div className="rounded-xl border border-amber-300 bg-amber-100 p-3 text-xs text-amber-900 space-y-1">
               <p className="font-semibold uppercase tracking-wide">Scope &amp; Assumptions</p>
               <ul className="list-disc list-inside space-y-0.5">
@@ -674,14 +687,20 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 {annualEnergyPotential !== null && (
                   <div className="rounded-xl border border-amber-200 bg-white p-4 shadow-sm">
                     <p className="text-xs text-slate-500 uppercase tracking-wide">Calculation Used</p>
-                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-2">
+                    <div className="mt-2 grid grid-cols-1 gap-2 sm:grid-cols-3">
                       <p className="text-sm text-slate-700">
-                        Predicted irradiance: <span className="font-semibold">{prediction.predictedIrradiance.toFixed(2)} kWh/m2/day</span>
+                        Predicted irradiance: <span className="font-semibold">{prediction.predictedIrradiance.toFixed(2)} kWh/m²/day</span>
+                      </p>
+                      <p className="text-sm text-slate-700">
+                        Rooftop area: <span className="font-semibold">{prediction.rooftopArea.toFixed(1)} m²</span>
                       </p>
                       <p className="text-sm text-slate-700">
                         Annual potential: <span className="font-semibold">{annualEnergyPotential.toLocaleString(undefined, { maximumFractionDigits: 0 })} kWh/year</span>
                       </p>
                     </div>
+                    <p className="mt-3 text-sm text-slate-700">
+                      Daily SEP formula: <span className="font-semibold">{prediction.predictedIrradiance.toFixed(2)} kWh/m²/day × {prediction.rooftopArea.toFixed(1)} m² = {prediction.solarPotential.toFixed(2)} kWh/day</span>
+                    </p>
                     <p className="text-xs text-slate-400 mt-3 leading-relaxed">
                       This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
                     </p>

@@ -117,7 +117,7 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   </p>
                   <p className="text-xs text-slate-400">kWh/day theoretical rooftop energy</p>
                   <p className="mt-2 text-xs text-slate-500">
-                    Irradiance: {formatExact(liveComparison.baseline.predictedIrradiance, 4)} kWh/m2/day
+                    Irradiance: {formatExact(liveComparison.baseline.predictedIrradiance, 4)} kWh/m²/day
                   </p>
                 </div>
                 <div className="rounded-xl border-2 border-orange-200 bg-white p-4 shadow-sm">
@@ -127,7 +127,7 @@ export function ModelAnalytics({ lat = 7.0731, lng = 125.6128 }: ModelAnalyticsP
                   </p>
                   <p className="text-xs text-slate-400">kWh/day theoretical rooftop energy</p>
                   <p className="mt-2 text-xs text-slate-500">
-                    Irradiance: {formatExact(liveComparison.fiAdaBoost.predictedIrradiance, 4)} kWh/m2/day
+                    Irradiance: {formatExact(liveComparison.fiAdaBoost.predictedIrradiance, 4)} kWh/m²/day
                   </p>
                 </div>
               </div>
@@ -177,4 +177,3 @@ function SnapshotTile({ label, value }: { label: string; value: string }) {
     </div>
   );
 }
-
