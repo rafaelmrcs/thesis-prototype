@@ -577,16 +577,14 @@ export function GlobalModelAnalytics() {
            <div className="overflow-x-auto rounded-xl border border-slate-200 bg-white shadow-sm">
              <table className="w-full text-sm">
                <thead className="bg-slate-100 text-slate-700">
-                 <tr>
-	                   <th className="px-4 py-3 text-left font-semibold">Fold</th>
-	                   <th className="px-4 py-3 text-right font-semibold">Ada Train RMSE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">Ada Val MAE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">Ada Val R² (%)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">FI Train RMSE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">FI Val MAE (J/m²/day)</th>
-	                   <th className="px-4 py-3 text-right font-semibold">FI Val R² (%)</th>
+		                 <tr>
+		                   <th className="px-4 py-3 text-left font-semibold">Fold</th>
+		                   <th className="px-4 py-3 text-right font-semibold">Ada Val RMSE (J/m²/day)</th>
+		                   <th className="px-4 py-3 text-right font-semibold">Ada Val MAE (J/m²/day)</th>
+		                   <th className="px-4 py-3 text-right font-semibold">Ada Val R² (%)</th>
+		                   <th className="px-4 py-3 text-right font-semibold">FI Val RMSE (J/m²/day)</th>
+		                   <th className="px-4 py-3 text-right font-semibold">FI Val MAE (J/m²/day)</th>
+		                   <th className="px-4 py-3 text-right font-semibold">FI Val R² (%)</th>
 	                   <th className="px-4 py-3 text-right font-semibold">RMSE Gain (J/m²/day)</th>
 	                   <th className="px-4 py-3 text-right font-semibold">MAE Gain (J/m²/day)</th>
 	                 </tr>
@@ -595,17 +593,15 @@ export function GlobalModelAnalytics() {
 	                 {spatialCv.folds.map((f) => {
 	                   const rmseGain = f.baseline_val_rmse - f.fi_val_rmse;
 	                   const maeGain = f.baseline_val_mae - f.fi_val_mae;
-	                   return (
-	                     <tr key={f.fold} className="border-t border-slate-200 hover:bg-slate-50">
-	                       <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
-	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_train_rmse, 3)}</td>
-	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
-	                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_mae, 3)}</td>
-	                       <td className="px-4 py-3 text-right">{formatR2Percent(f.baseline_val_r2)}</td>
-	                       <td className="px-4 py-3 text-right">{formatExact(f.fi_train_rmse, 3)}</td>
-	                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
-	                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_mae, 3)}</td>
-	                       <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatR2Percent(f.fi_val_r2)}</td>
+		                   return (
+		                     <tr key={f.fold} className="border-t border-slate-200 hover:bg-slate-50">
+		                       <td className="px-4 py-3 font-medium">Fold {f.fold}</td>
+		                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_rmse, 3)}</td>
+		                       <td className="px-4 py-3 text-right">{formatExact(f.baseline_val_mae, 3)}</td>
+		                       <td className="px-4 py-3 text-right">{formatR2Percent(f.baseline_val_r2, 4)}</td>
+		                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_rmse, 3)}</td>
+		                       <td className="px-4 py-3 text-right font-semibold text-orange-600">{formatExact(f.fi_val_mae, 3)}</td>
+		                       <td className="px-4 py-3 text-right font-semibold text-emerald-600">{formatR2Percent(f.fi_val_r2, 4)}</td>
 	                       <td className={`px-4 py-3 text-right ${rmseGain >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
 	                         {rmseGain >= 0 ? '↓' : '↑'} {formatExact(Math.abs(rmseGain), 3)}
 	                       </td>
@@ -615,16 +611,14 @@ export function GlobalModelAnalytics() {
 	                     </tr>
 	                   );
 	                 })}
-	                 <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
-	                   <td className="px-4 py-3">Average</td>
-	                   <td className="px-4 py-3 text-right">—</td>
-	                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
-	                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_mae, 3)}</td>
-	                   <td className="px-4 py-3 text-right">{formatR2Percent(spatialCv.average.baseline_val_r2)}</td>
-	                   <td className="px-4 py-3 text-right">—</td>
-	                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
-	                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_mae, 3)}</td>
-	                   <td className="px-4 py-3 text-right text-emerald-600">{formatR2Percent(spatialCv.average.fi_val_r2)}</td>
+		                 <tr className="border-t-2 border-slate-300 bg-slate-50 font-semibold">
+		                   <td className="px-4 py-3">Average</td>
+		                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_rmse, 3)}</td>
+		                   <td className="px-4 py-3 text-right">{formatExact(spatialCv.average.baseline_val_mae, 3)}</td>
+		                   <td className="px-4 py-3 text-right">{formatR2Percent(spatialCv.average.baseline_val_r2, 4)}</td>
+		                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_rmse, 3)}</td>
+		                   <td className="px-4 py-3 text-right text-orange-600">{formatExact(spatialCv.average.fi_val_mae, 3)}</td>
+		                   <td className="px-4 py-3 text-right text-emerald-600">{formatR2Percent(spatialCv.average.fi_val_r2, 4)}</td>
 	                   <td className={`px-4 py-3 text-right ${spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse >= 0 ? 'text-emerald-600' : 'text-red-600'}`}>
 	                     {spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse >= 0 ? '↓' : '↑'} {formatExact(Math.abs(spatialCv.average.baseline_val_rmse - spatialCv.average.fi_val_rmse), 3)}
 	                   </td>
