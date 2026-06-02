@@ -8,7 +8,7 @@ import { Card, CardContent, CardDescription, CardHeader, CardTitle } from './ui/
 import { Badge } from './ui/badge';
 import { MapContainer, TileLayer, Marker, useMapEvents, useMap } from "react-leaflet";
 import L from "leaflet";
-import type { LeafletMouseEvent } from "leaflet";
+import type { LatLngBoundsExpression, LeafletMouseEvent } from "leaflet";
 import { fetchBackendJson } from '../lib/backend';
 
 const defaultIcon = L.icon({
@@ -24,9 +24,30 @@ const DEFAULT_COORDINATES = {
   lat: DEFAULT_MAP_CENTER[0].toFixed(6),
   lng: DEFAULT_MAP_CENTER[1].toFixed(6),
 };
+const DAVAO_BOUNDS = {
+  south: 6.8,
+  west: 125.3,
+  north: 7.35,
+  east: 126.0,
+} as const;
+const DAVAO_MAP_BOUNDS: LatLngBoundsExpression = [
+  [DAVAO_BOUNDS.south, DAVAO_BOUNDS.west],
+  [DAVAO_BOUNDS.north, DAVAO_BOUNDS.east],
+];
+const DAVAO_BOUNDS_ERROR =
+  'Please choose a location inside Davao City only. Use the map, search, or coordinates within the Davao City bounds.';
 
 function formatCoordinate(value: number): string {
   return value.toFixed(6);
+}
+
+function isWithinDavaoBounds(lat: number, lng: number): boolean {
+  return (
+    lat >= DAVAO_BOUNDS.south &&
+    lat <= DAVAO_BOUNDS.north &&
+    lng >= DAVAO_BOUNDS.west &&
+    lng <= DAVAO_BOUNDS.east
+  );
 }
 
 function mapLiveLookupError(message: string): string {
@@ -70,6 +91,12 @@ function parseCoordinatePair(input: string): { lat: number; lng: number } | { er
   if (lat < -90 || lat > 90 || lng < -180 || lng > 180) {
     return {
       error: "Coordinates must use latitude between -90 and 90 and longitude between -180 and 180.",
+    };
+  }
+
+  if (!isWithinDavaoBounds(lat, lng)) {
+    return {
+      error: `Coordinates must be inside Davao City (latitude ${DAVAO_BOUNDS.south.toFixed(2)}-${DAVAO_BOUNDS.north.toFixed(2)}, longitude ${DAVAO_BOUNDS.west.toFixed(2)}-${DAVAO_BOUNDS.east.toFixed(2)}).`,
     };
   }
 
@@ -152,6 +179,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const latValue = Number(coordinates.lat);
   const lngValue = Number(coordinates.lng);
   const hasValidCoordinates = Number.isFinite(latValue) && Number.isFinite(lngValue);
+  const isWithinDavao = hasValidCoordinates && isWithinDavaoBounds(latValue, lngValue);
+  const canUseCoordinates = hasValidCoordinates && isWithinDavao;
 
   const annualEnergyPotential = prediction
     ? prediction.solarPotential * 365
@@ -161,21 +190,27 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   useEffect(() => {
     if (coordinates.lat || coordinates.lng) {
       setPrediction(null);
-      setApiError(null);
     }
   }, [coordinates.lat, coordinates.lng]);
 
   useEffect(() => {
-    if (hasValidCoordinates) {
+    if (canUseCoordinates) {
       onCoordinatesChange?.(latValue, lngValue);
     }
-  }, [hasValidCoordinates, latValue, lngValue, onCoordinatesChange]);
+  }, [canUseCoordinates, latValue, lngValue, onCoordinatesChange]);
 
-  const applyCoordinates = (lat: number, lng: number, nextAddress?: string) => {
+  const applyCoordinates = (lat: number, lng: number, nextAddress?: string): boolean => {
+    if (!isWithinDavaoBounds(lat, lng)) {
+      setApiError(DAVAO_BOUNDS_ERROR);
+      return false;
+    }
+
     const formattedLat = formatCoordinate(lat);
     const formattedLng = formatCoordinate(lng);
     setCoordinates({ lat: formattedLat, lng: formattedLng });
     setAddress(nextAddress ?? `${formattedLat}, ${formattedLng}`);
+    setApiError(null);
+    return true;
   };
 
   const handleLocateMe = () => {
@@ -183,6 +218,13 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     if (navigator.geolocation) {
       navigator.geolocation.getCurrentPosition(
         (position) => {
+          if (!isWithinDavaoBounds(position.coords.latitude, position.coords.longitude)) {
+            applyCoordinates(DEFAULT_MAP_CENTER[0], DEFAULT_MAP_CENTER[1], 'Davao City, Philippines');
+            setApiError('Your current location is outside Davao City, so the tool stayed at the Davao City center.');
+            setIsLoading(false);
+            return;
+          }
+
           applyCoordinates(position.coords.latitude, position.coords.longitude);
           setIsLoading(false);
         },
@@ -212,7 +254,6 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
 
     if (parsedCoordinates) {
       applyCoordinates(parsedCoordinates.lat, parsedCoordinates.lng);
-      setApiError(null);
       return;
     }
 
@@ -221,7 +262,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     try {
       const query = encodeURIComponent(`${trimmedAddress}, Davao City, Philippines`);
       const response = await fetch(
-        `https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1&bounded=1&viewbox=125.3,6.8,126.0,7.35`,
+        `https://nominatim.openstreetmap.org/search?format=json&q=${query}&limit=1&bounded=1&viewbox=${DAVAO_BOUNDS.west},${DAVAO_BOUNDS.south},${DAVAO_BOUNDS.east},${DAVAO_BOUNDS.north}`,
         {
           headers: {
             'User-Agent': 'SolarEnergyForecastingApp/1.0'
@@ -244,6 +285,11 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
       const location = results[0];
       const lat = Number(location.lat);
       const lng = Number(location.lon);
+      if (!isWithinDavaoBounds(lat, lng)) {
+        setApiError('Address result is outside Davao City. Try a Davao City landmark, barangay, or decimal coordinate.');
+        setIsLoading(false);
+        return;
+      }
 
       applyCoordinates(lat, lng, location.display_name);
       console.log('📍 Geocoded address:', location.display_name, '→', formatCoordinate(lat), formatCoordinate(lng));
@@ -259,6 +305,10 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const handlePredict = async () => {
     if (!hasValidCoordinates) {
       setApiError('Please provide valid latitude and longitude values.');
+      return;
+    }
+    if (!isWithinDavao) {
+      setApiError(DAVAO_BOUNDS_ERROR);
       return;
     }
 
@@ -326,7 +376,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             Select Your Location
           </CardTitle>
           <CardDescription>
-            Enter an address, paste coordinates, or click on the map to pin your location
+            Enter an address, paste coordinates, or click on the map to pin a rooftop inside Davao City only
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-4">
@@ -378,7 +428,10 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 placeholder="e.g., 7.0731"
                 value={coordinates.lat}
                 inputMode="decimal"
-                onChange={(e) => setCoordinates({ ...coordinates, lat: e.target.value })}
+                onChange={(e) => {
+                  setCoordinates({ ...coordinates, lat: e.target.value });
+                  setApiError(null);
+                }}
               />
             </div>
             <div className="space-y-2">
@@ -388,7 +441,10 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 placeholder="e.g., 125.6128"
                 value={coordinates.lng}
                 inputMode="decimal"
-                onChange={(e) => setCoordinates({ ...coordinates, lng: e.target.value })}
+                onChange={(e) => {
+                  setCoordinates({ ...coordinates, lng: e.target.value });
+                  setApiError(null);
+                }}
               />
             </div>
           </div>
@@ -403,6 +459,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
     zoom={14}
     minZoom={12}
     maxZoom={18}
+    maxBounds={DAVAO_MAP_BOUNDS}
+    maxBoundsViscosity={1.0}
     style={{ height: "100%", width: "100%", background: "#e5e7eb" }}
     scrollWheelZoom
   >
@@ -417,7 +475,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
       }}
     />
 
-    {hasValidCoordinates && (
+    {canUseCoordinates && (
       <>
         <RecenterMap lat={latValue} lng={lngValue} />
         <Marker
@@ -432,7 +490,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
 
   <p className="text-xs text-gray-500 flex items-center gap-1">
     <Navigation className="w-3 h-3" />
-    Click anywhere on the map to set your exact rooftop location
+    Click inside the locked Davao City map bounds to set your exact rooftop location
   </p>
 </div>
 
@@ -443,7 +501,12 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <span className="text-gray-600">Selected coordinates:</span>{' '}
                 <span className="font-mono">{coordinates.lat}, {coordinates.lng}</span>
               </p>
-              {!prediction && (
+              {hasValidCoordinates && !isWithinDavao && (
+                <p className="text-xs text-red-600 mt-1 font-medium">
+                  Location must be inside Davao City bounds before prediction.
+                </p>
+              )}
+              {!prediction && canUseCoordinates && (
                 <p className="text-xs text-blue-600 mt-1 font-medium">
                   📍 New location selected - Click "Predict Solar Potential" to analyze
                 </p>
@@ -454,7 +517,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
           <Button
             className="w-full bg-gradient-to-r from-orange-500 to-amber-500 hover:from-orange-600 hover:to-amber-600 text-white shadow-lg"
             onClick={handlePredict}
-            disabled={isLoading || !hasValidCoordinates}
+            disabled={isLoading || !canUseCoordinates}
             size="lg"
           >
             {isLoading ? (
@@ -501,8 +564,8 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
               <p className="font-semibold text-gray-800 mb-1">A. Pinning a Location</p>
               <ul className="space-y-1 list-disc list-inside text-xs text-gray-600">
                 <li>Search an address — results are filtered to Davao City bounds.</li>
-                <li>Type decimal coordinates in <span className="font-mono bg-amber-100 px-1 rounded">lat, lng</span> format (e.g. <span className="font-mono bg-amber-100 px-1 rounded">7.0731, 125.6128</span>) and press Enter.</li>
-                <li>Click anywhere on the map to drop the pin at that exact point.</li>
+                <li>Type decimal coordinates inside Davao City in <span className="font-mono bg-amber-100 px-1 rounded">lat, lng</span> format (e.g. <span className="font-mono bg-amber-100 px-1 rounded">7.0731, 125.6128</span>) and press Enter.</li>
+                <li>Click inside the Davao City map bounds to drop the pin at that exact point.</li>
               </ul>
             </div>
 
@@ -532,7 +595,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 <li>Whole rooftop area is assumed available — no panel layout is modelled.</li>
                 <li>Panel efficiency, inverter losses, and performance ratio are excluded.</li>
                 <li>Prediction uses the nearest OpenStreetMap building polygon; accuracy depends on OSM coverage quality.</li>
-                <li>Locations far from central Davao City will return lower prediction confidence scores.</li>
+                <li>Locations outside Davao City bounds are blocked by the map, search, coordinate, and prediction controls.</li>
               </ul>
             </div>
           </CardContent>
@@ -743,4 +806,3 @@ function InfoItem({ label, value, icon, description, gradient }: InfoItemProps) 
     </div>
   );
 }
-
