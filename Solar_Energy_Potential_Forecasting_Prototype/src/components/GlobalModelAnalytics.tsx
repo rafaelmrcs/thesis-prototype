@@ -796,11 +796,6 @@ export function GlobalModelAnalytics() {
                  caption: 'Residual Analysis',
                  description: 'Residual plot (actual − predicted) vs predicted value. A horizontal band centred near zero indicates unbiased predictions; patterns or fanning suggest model misfit.',
                },
-               {
-                 file: 'overfit_check.png',
-                 caption: 'Overfit Check (Train vs Test)',
-                 description: 'Train vs test RMSE per model. A large gap between the two bars signals overfitting — the model memorised training data but generalises poorly.',
-               },
 	               {
 	                 file: 'feature_weight_importance.png',
 	                 caption: 'FI-AdaBoost Feature Weight Importance',
