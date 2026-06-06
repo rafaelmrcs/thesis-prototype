@@ -83,6 +83,7 @@ DEFAULT_OVERPASS_API_URLS = (
 OVERPASS_TIMEOUT_SEC = 18
 OVERPASS_RADIUS_SEQUENCE_METERS = (150, 300)
 REQUEST_USER_AGENT = "FI-AdaBoost-Solar-Potential/2.1"
+POINT_ON_SEGMENT_EPS = 1e-12
 DEFAULT_CORS_ORIGIN_REGEX = (
     r"http://([a-zA-Z0-9\-\.]+):5173"
     r"|https://([a-zA-Z0-9\-]+\.)*(up\.)?railway\.app"
@@ -422,10 +423,20 @@ def _overpass_buildings_for_radius(
 
 
 def _overpass_buildings(lat: float, lng: float) -> list[dict[str, Any]]:
+    candidates: list[dict[str, Any]] = []
+    seen_keys: set[tuple[str, Any]] = set()
+
     for radius_m in OVERPASS_RADIUS_SEQUENCE_METERS:
         buildings = _overpass_buildings_for_radius(lat, lng, radius_m)
-        if buildings:
-            return buildings
+        for building in buildings:
+            key = (str(building.get("type", "way")), building.get("id", id(building)))
+            if key in seen_keys:
+                continue
+            seen_keys.add(key)
+            candidates.append(building)
+
+    if candidates:
+        return candidates
 
     final_radius_m = OVERPASS_RADIUS_SEQUENCE_METERS[-1]
     raise LiveFeatureError(
@@ -464,6 +475,86 @@ def _area_m2(nodes: list[dict[str, float]]) -> float:
     return abs(total) / 2.0
 
 
+def _point_on_segment(
+    lat: float,
+    lng: float,
+    start: dict[str, float],
+    end: dict[str, float],
+) -> bool:
+    px, py = lng, lat
+    ax, ay = start["lon"], start["lat"]
+    bx, by = end["lon"], end["lat"]
+    dx = bx - ax
+    dy = by - ay
+
+    if abs(dx) <= POINT_ON_SEGMENT_EPS and abs(dy) <= POINT_ON_SEGMENT_EPS:
+        return abs(px - ax) <= POINT_ON_SEGMENT_EPS and abs(py - ay) <= POINT_ON_SEGMENT_EPS
+
+    cross = (px - ax) * dy - (py - ay) * dx
+    tolerance = POINT_ON_SEGMENT_EPS * max(1.0, abs(dx), abs(dy))
+    if abs(cross) > tolerance:
+        return False
+
+    dot = (px - ax) * dx + (py - ay) * dy
+    if dot < -POINT_ON_SEGMENT_EPS:
+        return False
+
+    segment_len_sq = dx * dx + dy * dy
+    return dot <= segment_len_sq + POINT_ON_SEGMENT_EPS
+
+
+def _point_in_polygon(lat: float, lng: float, nodes: list[dict[str, float]]) -> bool:
+    if len(nodes) < 3:
+        return False
+
+    inside = False
+    previous = nodes[-1]
+    for current in nodes:
+        if _point_on_segment(lat, lng, previous, current):
+            return True
+
+        y_current = current["lat"]
+        y_previous = previous["lat"]
+        crosses_horizontal_ray = (y_current > lat) != (y_previous > lat)
+        if crosses_horizontal_ray:
+            x_current = current["lon"]
+            x_previous = previous["lon"]
+            x_intersection = (
+                (x_previous - x_current)
+                * (lat - y_current)
+                / (y_previous - y_current)
+                + x_current
+            )
+            if lng < x_intersection:
+                inside = not inside
+
+        previous = current
+
+    return inside
+
+
+def _containing_building_index(
+    lat: float,
+    lng: float,
+    elements: list[dict[str, Any]],
+) -> int:
+    matches: list[tuple[float, int]] = []
+    for idx, element in enumerate(elements):
+        nodes = element.get("geometry", [])
+        if not isinstance(nodes, list) or not _point_in_polygon(lat, lng, nodes):
+            continue
+        matches.append((_area_m2(nodes), idx))
+
+    if not matches:
+        raise LiveFeatureError(
+            "No mapped rooftop contains the selected point. "
+            "Click directly inside a rooftop footprint.",
+            status_code=404,
+        )
+
+    return min(matches, key=lambda item: item[0])[1]
+
+
 def _orientation_score(azimuth_deg: float) -> float:
     return float((math.cos(math.radians(azimuth_deg - 180.0)) + 1.0) / 2.0)
 
@@ -482,11 +573,8 @@ def compute_osm_features(lat: float, lng: float, sei_normalizer: float) -> dict[
                 count += 1
         nearby_counts.append(count)
 
-    nearest_idx = min(
-        range(len(elements)),
-        key=lambda idx: _dist_m(lat, lng, centroids[idx][0], centroids[idx][1]),
-    )
-    nearest = elements[nearest_idx]
+    selected_idx = _containing_building_index(lat, lng, elements)
+    nearest = elements[selected_idx]
     nodes = nearest["geometry"]
 
     lats = [node["lat"] for node in nodes]
@@ -498,7 +586,7 @@ def compute_osm_features(lat: float, lng: float, sei_normalizer: float) -> dict[
     area = _area_m2(nodes)
 
     max_count = max(max(nearby_counts), 1)
-    shading = float(np.clip(0.3 * nearby_counts[nearest_idx] / max_count, 0.0, 1.0))
+    shading = float(np.clip(0.3 * nearby_counts[selected_idx] / max_count, 0.0, 1.0))
     sei_raw = orientation * area * (1.0 - shading) * TILT_FACTOR
     sei_norm = float(np.clip(sei_raw / max(sei_normalizer, 1e-9), 0.0, 1.0))
 
@@ -1113,11 +1201,11 @@ def predict_help() -> dict[str, str]:
 
 
 def _live_feature_bundle(lat: float, lng: float) -> tuple[dict[str, float], dict[str, float | str], dict[str, float]]:
+    osm = compute_osm_features(lat, lng, ctx.sei_normalizer)
     nasa = fetch_nasa_live(lat, lng)
     start_date = date.fromisoformat(str(nasa["window_start"]))
     end_date = date.fromisoformat(str(nasa["window_end"]))
     pvlib_features = _pvlib_features(lat, lng, start_date=start_date, end_date=end_date)
-    osm = compute_osm_features(lat, lng, ctx.sei_normalizer)
     return osm, nasa, pvlib_features
 
 

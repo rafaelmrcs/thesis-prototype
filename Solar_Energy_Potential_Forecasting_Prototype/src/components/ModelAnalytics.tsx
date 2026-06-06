@@ -43,6 +43,12 @@ interface ComparisonData {
 }
 
 function mapLiveComparisonError(message: string): string {
+  if (/No mapped rooftop contains the selected point/i.test(message)) {
+    return 'No mapped rooftop contains this point. Zoom in and click inside the building outline.';
+  }
+  if (/No mapped building footprint was found near/i.test(message)) {
+    return 'No mapped rooftop was found near this pinned location. Zoom in and click directly inside a mapped building outline.';
+  }
   if (/Live rooftop lookup is temporarily unavailable because all configured Overpass endpoints failed/i.test(message)) {
     return 'Live OpenStreetMap rooftop lookup is temporarily unavailable right now. Please try refreshing this analysis shortly.';
   }

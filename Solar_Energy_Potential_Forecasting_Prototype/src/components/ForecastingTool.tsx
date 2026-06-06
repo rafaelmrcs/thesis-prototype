@@ -54,8 +54,11 @@ function mapLiveLookupError(message: string): string {
   if (/Failed to fetch|NetworkError|Backend URL is not configured/i.test(message)) {
     return 'Failed to reach backend. Set VITE_BACKEND_URL to your Railway backend URL, then redeploy frontend.';
   }
+  if (/No mapped rooftop contains the selected point/i.test(message)) {
+    return 'No mapped rooftop contains this point. Zoom in and click inside the building outline.';
+  }
   if (/No mapped building footprint was found near/i.test(message)) {
-    return 'No mapped rooftop was found near this pinned location. Try clicking closer to a building or choose another nearby address.';
+    return 'No mapped rooftop was found near this pinned location. Zoom in and click directly inside a mapped building outline.';
   }
   if (/Live rooftop lookup is temporarily unavailable because all configured Overpass endpoints failed/i.test(message)) {
     return 'Live OpenStreetMap rooftop lookup is temporarily unavailable right now. Please try predicting again shortly.';
@@ -376,7 +379,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
             Select Your Location
           </CardTitle>
           <CardDescription>
-            Enter an address, paste coordinates, or click on the map to pin a rooftop inside Davao City only
+            Enter an address, paste coordinates, or click directly inside a mapped rooftop footprint in Davao City
           </CardDescription>
         </CardHeader>
         <CardContent className="pt-6 space-y-4">
@@ -490,7 +493,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
 
   <p className="text-xs text-gray-500 flex items-center gap-1">
     <Navigation className="w-3 h-3" />
-    Click inside the locked Davao City map bounds to set your exact rooftop location
+    Click directly inside a mapped rooftop footprint within the locked Davao City bounds
   </p>
 </div>
 
@@ -578,7 +581,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
               <ul className="space-y-1 list-disc list-inside text-xs text-gray-600">
                 <li>Search an address — results are filtered to Davao City bounds.</li>
                 <li>Type decimal coordinates inside Davao City in <span className="font-mono bg-amber-100 px-1 rounded">lat, lng</span> format (e.g. <span className="font-mono bg-amber-100 px-1 rounded">7.0731, 125.6128</span>) and press Enter.</li>
-                <li>Click inside the Davao City map bounds to drop the pin at that exact point.</li>
+                <li>Click directly inside a mapped rooftop footprint to drop the pin at that exact point.</li>
               </ul>
             </div>
 
@@ -607,7 +610,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
               <ul className="list-disc list-inside space-y-0.5">
                 <li>Whole rooftop area is assumed available — no panel layout is modelled.</li>
                 <li>Panel efficiency, inverter losses, and performance ratio are excluded.</li>
-                <li>Prediction uses the nearest OpenStreetMap building polygon; accuracy depends on OSM coverage quality.</li>
+                <li>Prediction only runs when the selected point is inside an OpenStreetMap building polygon; accuracy depends on OSM coverage quality.</li>
                 <li>Locations outside Davao City bounds are blocked by the map, search, coordinate, and prediction controls.</li>
               </ul>
             </div>
