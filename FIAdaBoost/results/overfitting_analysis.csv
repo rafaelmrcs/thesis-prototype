@@ -1,0 +1,3 @@
+model,validation_source,train_RMSE_J,validation_RMSE_J,RMSE_gap_validation_minus_train_J,train_MAE_J,validation_MAE_J,MAE_gap_validation_minus_train_J,train_R2,validation_R2,R2_gap_train_minus_validation
+AdaBoost (Baseline),held_out_test_split,6879.33946216,7684.33245401,804.992991845,6335.20981602,6442.54213955,107.332323535,0.99883270847,0.998459565943,0.000373142527214
+FI-AdaBoost (Proposed),held_out_test_split,2800.84407694,4908.18695425,2107.34287732,2222.60130739,2605.48368208,382.88237469,0.999806507686,0.999371546696,0.000434960989888

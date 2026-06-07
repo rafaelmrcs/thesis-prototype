@@ -1,6 +1,6 @@
 import { useEffect, useState } from 'react';
 import type { ReactNode } from 'react';
-import { MapPin, Locate, Sun, Home, Compass, Cloud, Droplets, Thermometer, Navigation, Search, ChevronDown, ChevronUp, BookOpen } from 'lucide-react';
+import { MapPin, Locate, Sun, Home, Compass, Cloud, Droplets, Thermometer, Navigation, Search, ChevronDown, ChevronUp, BookOpen, Ruler } from 'lucide-react';
 import { Button } from './ui/button';
 import { Input } from './ui/input';
 import { Label } from './ui/label';
@@ -111,6 +111,7 @@ interface PredictionResult {
   solarPotential: number;
   predictedIrradiance: number;
   rooftopArea: number;
+  rooftopAreaValidation?: RooftopAreaValidation;
   solarExposureIndex: number;
   orientation: string;
   azimuth: number;
@@ -119,6 +120,14 @@ interface PredictionResult {
   temperature: number;
   humidity: number;
   clearSkyRatio: number;
+}
+
+interface RooftopAreaValidation {
+  predictedArea: number;
+  actualArea: number;
+  absoluteError: number;
+  percentError: number;
+  squaredError: number;
 }
 
 type ApiPredictionResult = Omit<PredictionResult, 'predictedIrradiance'> & {
@@ -178,6 +187,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   const [isLoading, setIsLoading] = useState(false);
   const [prediction, setPrediction] = useState<PredictionResult | null>(null);
   const [apiError, setApiError] = useState<string | null>(null);
+  const [actualRooftopArea, setActualRooftopArea] = useState('');
   const [showGuide, setShowGuide] = useState(true);
   const latValue = Number(coordinates.lat);
   const lngValue = Number(coordinates.lng);
@@ -315,6 +325,16 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
       return;
     }
 
+    const trimmedActualArea = actualRooftopArea.trim();
+    const parsedActualArea = trimmedActualArea ? Number(trimmedActualArea) : undefined;
+    if (
+      trimmedActualArea &&
+      (!Number.isFinite(parsedActualArea) || parsedActualArea === undefined || parsedActualArea <= 0)
+    ) {
+      setApiError('Actual rooftop area must be a positive number in square meters.');
+      return;
+    }
+
     console.log('🎯 Predicting for coordinates:', { lat: latValue, lng: lngValue });
 
     setApiError(null);
@@ -326,7 +346,11 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
         headers: {
           'Content-Type': 'application/json',
         },
-        body: JSON.stringify({ lat: latValue, lng: lngValue }),
+        body: JSON.stringify({
+          lat: latValue,
+          lng: lngValue,
+          ...(parsedActualArea !== undefined ? { actualRooftopArea: parsedActualArea } : {}),
+        }),
       });
       console.log('✅ Prediction result:', result);
       setPrediction(normalizePredictionResult(result));
@@ -368,6 +392,7 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
   };
 
   const rating = prediction ? getSolarRating(prediction.predictedIrradiance) : null;
+  const rooftopAreaValidation = prediction?.rooftopAreaValidation ?? null;
 
   return (
     <div className="space-y-6">
@@ -450,6 +475,26 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                 }}
               />
             </div>
+          </div>
+
+          <div className="space-y-2 rounded-lg border border-slate-200 bg-slate-50 p-3">
+            <Label htmlFor="actual-rooftop-area" className="flex items-center gap-2 text-sm">
+              <Ruler className="w-4 h-4 text-slate-600" />
+              Actual rooftop area for validation
+            </Label>
+            <Input
+              id="actual-rooftop-area"
+              placeholder="Optional, e.g., 125.5"
+              value={actualRooftopArea}
+              inputMode="decimal"
+              onChange={(e) => {
+                setActualRooftopArea(e.target.value);
+                setApiError(null);
+              }}
+            />
+            <p className="text-xs text-slate-500">
+              Enter a measured/reference rooftop area in m² to compare against the OSM-computed rooftop area.
+            </p>
           </div>
 
 <div className="space-y-2">
@@ -704,6 +749,38 @@ export function ForecastingTool({ onCoordinatesChange }: ForecastingToolProps) {
                     <p className="mt-3 text-sm text-slate-700">
                       Daily SEP formula: <span className="font-semibold">{prediction.predictedIrradiance.toFixed(2)} kWh/m²/day × {prediction.rooftopArea.toFixed(1)} m² = {prediction.solarPotential.toFixed(2)} kWh/day</span>
                     </p>
+                    {rooftopAreaValidation && (
+                      <div className="mt-4 rounded-lg border border-slate-200 bg-slate-50 p-3">
+                        <div className="flex items-center gap-2">
+                          <Ruler className="w-4 h-4 text-slate-600" />
+                          <p className="text-xs font-semibold uppercase tracking-wide text-slate-700">
+                            Rooftop Area Validation
+                          </p>
+                        </div>
+                        <div className="mt-3 grid grid-cols-1 gap-3 sm:grid-cols-2 lg:grid-cols-5">
+                          <div>
+                            <p className="text-xs text-slate-500">Predicted area</p>
+                            <p className="text-sm font-semibold text-slate-800">{rooftopAreaValidation.predictedArea.toFixed(2)} m²</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Actual area</p>
+                            <p className="text-sm font-semibold text-slate-800">{rooftopAreaValidation.actualArea.toFixed(2)} m²</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Absolute error</p>
+                            <p className="text-sm font-semibold text-slate-800">{rooftopAreaValidation.absoluteError.toFixed(2)} m²</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Percent error</p>
+                            <p className="text-sm font-semibold text-slate-800">{rooftopAreaValidation.percentError.toFixed(2)}%</p>
+                          </div>
+                          <div>
+                            <p className="text-xs text-slate-500">Squared error</p>
+                            <p className="text-sm font-semibold text-slate-800">{rooftopAreaValidation.squaredError.toFixed(2)} m⁴</p>
+                          </div>
+                        </div>
+                      </div>
+                    )}
                     <p className="text-xs text-slate-400 mt-3 leading-relaxed">
                       This is theoretical rooftop energy before any conversion to electricity; panel efficiency and performance ratio are outside this study scope.
                     </p>

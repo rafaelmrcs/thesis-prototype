@@ -14,6 +14,11 @@ def node(lat: float, lon: float) -> dict[str, float]:
     return {"lat": lat, "lon": lon}
 
 
+class DummyModel:
+    def predict(self, X):
+        return [api.KWH_TO_J * 5.0]
+
+
 @unittest.skipIf(api is None, f"backend dependencies unavailable: {IMPORT_ERROR}")
 class ExactRooftopLookupTests(unittest.TestCase):
     def setUp(self) -> None:
@@ -67,6 +72,79 @@ class ExactRooftopLookupTests(unittest.TestCase):
                 api._live_feature_bundle(0.5, 0.5)
 
         nasa.assert_not_called()
+
+    def test_rooftop_area_validation_calculates_error_fields(self) -> None:
+        validation = api._compute_rooftop_area_validation(120.0, 100.0)
+
+        self.assertIsNotNone(validation)
+        self.assertEqual(validation.predictedArea, 120.0)
+        self.assertEqual(validation.actualArea, 100.0)
+        self.assertEqual(validation.absoluteError, 20.0)
+        self.assertEqual(validation.percentError, 20.0)
+        self.assertEqual(validation.squaredError, 400.0)
+
+    def test_predict_omits_rooftop_validation_without_actual_area(self) -> None:
+        try:
+            from fastapi.testclient import TestClient
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"FastAPI test client unavailable: {exc}")
+
+        client = TestClient(api.app)
+        with patch.object(api.ctx, "ensure_core_loaded"), patch.object(
+            api.ctx,
+            "fi_model",
+            DummyModel(),
+        ), patch.object(api, "_live_feature_bundle", return_value=self._mock_bundle()):
+            response = client.post("/predict", json={"lat": 0.5, "lng": 0.5})
+
+        self.assertEqual(response.status_code, 200)
+        self.assertNotIn("rooftopAreaValidation", response.json())
+
+    def test_predict_includes_rooftop_validation_with_actual_area(self) -> None:
+        try:
+            from fastapi.testclient import TestClient
+        except ModuleNotFoundError as exc:
+            self.skipTest(f"FastAPI test client unavailable: {exc}")
+
+        client = TestClient(api.app)
+        with patch.object(api.ctx, "ensure_core_loaded"), patch.object(
+            api.ctx,
+            "fi_model",
+            DummyModel(),
+        ), patch.object(api, "_live_feature_bundle", return_value=self._mock_bundle()):
+            response = client.post(
+                "/predict",
+                json={"lat": 0.5, "lng": 0.5, "actualRooftopArea": 80.0},
+            )
+
+        self.assertEqual(response.status_code, 200)
+        validation = response.json()["rooftopAreaValidation"]
+        self.assertEqual(validation["predictedArea"], 100.0)
+        self.assertEqual(validation["actualArea"], 80.0)
+        self.assertEqual(validation["absoluteError"], 20.0)
+        self.assertEqual(validation["percentError"], 25.0)
+        self.assertEqual(validation["squaredError"], 400.0)
+
+    @staticmethod
+    def _mock_bundle():
+        osm = {
+            "rooftop_area_sq_m": 100.0,
+            "azimuth_deg": 180.0,
+            "orientation_score": 1.0,
+            "shading_factor": 0.0,
+            "SEI_norm": 0.5,
+        }
+        nasa = {
+            "kt": 0.5,
+            "ghi_kwh": 4.0,
+            "temp_c": 30.0,
+            "humidity_pct": 75.0,
+        }
+        pvlib_features = {
+            "ghi_clear_annual": 5.0,
+            "sunshine_hours": 6.0,
+        }
+        return osm, nasa, pvlib_features
 
 
 if __name__ == "__main__":

@@ -97,6 +97,15 @@ logger = logging.getLogger(__name__)
 class PredictRequest(BaseModel):
     lat: float = Field(..., ge=-90, le=90)
     lng: float = Field(..., ge=-180, le=180)
+    actualRooftopArea: float | None = Field(default=None, gt=0)
+
+
+class RooftopAreaValidation(BaseModel):
+    predictedArea: float
+    actualArea: float
+    absoluteError: float
+    percentError: float
+    squaredError: float
 
 
 class PredictResponse(BaseModel):
@@ -111,6 +120,7 @@ class PredictResponse(BaseModel):
     temperature: float
     humidity: float
     clearSkyRatio: float
+    rooftopAreaValidation: RooftopAreaValidation | None = None
 
 
 class CompareResponse(BaseModel):
@@ -642,6 +652,7 @@ def _build_response(
     osm: dict[str, float],
     nasa: dict[str, float | str],
     pvlib_features: dict[str, float],
+    actual_rooftop_area: float | None = None,
 ) -> PredictResponse:
     ghi_kwh = float(ghi_j) / KWH_TO_J
     rooftop_area = float(osm["rooftop_area_sq_m"])
@@ -666,6 +677,29 @@ def _build_response(
         temperature=float(nasa["temp_c"]),
         humidity=float(nasa["humidity_pct"]),
         clearSkyRatio=clear_sky_ratio,
+        rooftopAreaValidation=_compute_rooftop_area_validation(
+            rooftop_area,
+            actual_rooftop_area,
+        ),
+    )
+
+
+def _compute_rooftop_area_validation(
+    predicted_area: float,
+    actual_area: float | None,
+) -> RooftopAreaValidation | None:
+    if actual_area is None:
+        return None
+
+    predicted = float(predicted_area)
+    actual = float(actual_area)
+    absolute_error = abs(predicted - actual)
+    return RooftopAreaValidation(
+        predictedArea=predicted,
+        actualArea=actual,
+        absoluteError=absolute_error,
+        percentError=(absolute_error / actual) * 100.0,
+        squaredError=(predicted - actual) ** 2,
     )
 
 
@@ -1209,7 +1243,7 @@ def _live_feature_bundle(lat: float, lng: float) -> tuple[dict[str, float], dict
     return osm, nasa, pvlib_features
 
 
-@app.post("/predict", response_model=PredictResponse)
+@app.post("/predict", response_model=PredictResponse, response_model_exclude_none=True)
 def predict(payload: PredictRequest) -> PredictResponse:
     try:
         ctx.ensure_core_loaded()
@@ -1223,12 +1257,18 @@ def predict(payload: PredictRequest) -> PredictResponse:
         osm, nasa, pvlib_features = _live_feature_bundle(payload.lat, payload.lng)
         X = _build_feature_frame(payload.lat, payload.lng, osm, nasa, pvlib_features)
         ghi_j = float(ctx.fi_model.predict(X)[0])
-        return _build_response(ghi_j, osm, nasa, pvlib_features)
+        return _build_response(
+            ghi_j,
+            osm,
+            nasa,
+            pvlib_features,
+            actual_rooftop_area=payload.actualRooftopArea,
+        )
     except LiveFeatureError as exc:
         raise HTTPException(status_code=exc.status_code, detail=exc.detail) from exc
 
 
-@app.post("/compare", response_model=CompareResponse)
+@app.post("/compare", response_model=CompareResponse, response_model_exclude_none=True)
 def compare_models(payload: PredictRequest) -> CompareResponse:
     try:
         ctx.ensure_core_loaded()
@@ -1245,8 +1285,20 @@ def compare_models(payload: PredictRequest) -> CompareResponse:
         baseline_ghi_j = float(ctx.baseline_model.predict(X)[0])
         fi_ghi_j = float(ctx.fi_model.predict(X)[0])
 
-        baseline_result = _build_response(baseline_ghi_j, osm, nasa, pvlib_features)
-        fi_result = _build_response(fi_ghi_j, osm, nasa, pvlib_features)
+        baseline_result = _build_response(
+            baseline_ghi_j,
+            osm,
+            nasa,
+            pvlib_features,
+            actual_rooftop_area=payload.actualRooftopArea,
+        )
+        fi_result = _build_response(
+            fi_ghi_j,
+            osm,
+            nasa,
+            pvlib_features,
+            actual_rooftop_area=payload.actualRooftopArea,
+        )
 
         diff_kwh = fi_result.solarPotential - baseline_result.solarPotential
         irradiance_diff_kwh_m2 = (

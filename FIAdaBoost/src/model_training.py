@@ -444,6 +444,55 @@ def _print_table(title: str, df: pd.DataFrame) -> None:
 # =============================================================================
 # OPTUNA HYPERPARAMETER TUNING — Fix 4
 # =============================================================================
+HYPERPARAMETER_EXPORT_ORDER = [
+    "n_estimators",
+    "learning_rate",
+    "max_depth",
+    "min_samples_split",
+    "min_samples_leaf",
+    "loss",
+    "random_state",
+    "Number of trials",
+    "Validation method",
+]
+
+
+def _hyperparameter_sampling_option(
+    param: str,
+    model: str,
+    cv_method: str,
+    n_trials: int,
+    n_splits: int,
+) -> str:
+    """Return the sampling range/options that match the current training code."""
+    is_fi = "FI-AdaBoost" in model
+    options = {
+        "n_estimators": "50-300",
+        "learning_rate": "0.01-2.00 log scale",
+        "max_depth": "1-6" if is_fi else "1-5",
+        "min_samples_split": "2 (fixed default; not sampled)",
+        "min_samples_leaf": "1 (fixed default; not sampled)",
+        "loss": (
+            "custom FI-modulated loss"
+            if is_fi
+            else "linear (fixed default; sklearn options: linear, square, exponential)"
+        ),
+        "random_state": str(RANDOM_SEED),
+        "Number of trials": str(n_trials),
+        "Validation method": f"{n_splits}-fold {cv_method}",
+    }
+    return options[param]
+
+
+def _hyperparameter_selection_method(param: str) -> str:
+    """Return whether a row is searched by Optuna or fixed by the experiment."""
+    if param in {"n_estimators", "learning_rate", "max_depth"}:
+        return "Sampled by Optuna TPE per trial"
+    if param == "random_state":
+        return "Fixed for reproducibility"
+    return "Fixed"
+
+
 def _baseline_space(trial) -> dict:
     # Search space for standard AdaBoost; max_depth capped at 5 (shallower than FI variant)
     return {
@@ -551,34 +600,41 @@ def save_cv_metrics(cv_df: pd.DataFrame) -> str:
     return path
 
 
-def _hyperparameter_row(
+def _hyperparameter_rows(
     *,
     pipeline: str,
     model: str,
-    params: dict,
     target: str,
     features: list,
     cv_method: str,
     n_trials: int = 100,
     n_splits: int = 5,
-) -> dict:
-    """Build one reproducibility row for the tuned hyperparameters CSV."""
-    return {
-        "pipeline":         pipeline,
-        "model":            model,
-        "tuning_method":    "Optuna TPE",
-        "cv_method":        cv_method,
-        "n_trials":         n_trials,
-        "n_splits":         n_splits,
+) -> list[dict]:
+    """Build thesis-style reproducibility rows for the hyperparameter search setup."""
+    context = {
+        "pipeline": pipeline,
+        "model": model,
+        "tuning_method": "Optuna TPE",
         "objective_metric": "mean_validation_RMSE_J",
-        "target":           target,
-        "target_unit":      "J/m2/day",
-        "features":         ",".join(features),
-        "random_seed":      RANDOM_SEED,
-        "n_estimators":     params.get("n_estimators"),
-        "learning_rate":    params.get("learning_rate"),
-        "max_depth":        params.get("max_depth"),
+        "target": target,
+        "target_unit": "J/m2/day",
+        "features": ",".join(features),
     }
+    return [
+        {
+            **context,
+            "Hyperparameter": param,
+            "Sampling Range / Options": _hyperparameter_sampling_option(
+                param,
+                model,
+                cv_method,
+                n_trials,
+                n_splits,
+            ),
+            "Selection Method": _hyperparameter_selection_method(param),
+        }
+        for param in HYPERPARAMETER_EXPORT_ORDER
+    ]
 
 
 def save_hyperparameters_csv(rows: list[dict], append: bool = False) -> str:
@@ -775,27 +831,22 @@ def run_daily_pipeline() -> None:
     fi_params = _tune_timeseries(FIAdaBoostRegressor, _fi_space, X_tr, y_tr)
     print(f"  Best: {fi_params}")
 
-    p_hyper = save_hyperparameters_csv(
-        [
-            _hyperparameter_row(
-                pipeline="daily_temporal",
-                model="AdaBoost (Daily, Temporal Split)",
-                params=ada_params,
-                target=DAILY_TARGET,
-                features=DAILY_FEATURES,
-                cv_method="TimeSeriesSplit",
-            ),
-            _hyperparameter_row(
-                pipeline="daily_temporal",
-                model="FI-AdaBoost (Daily, Temporal Split)",
-                params=fi_params,
-                target=DAILY_TARGET,
-                features=DAILY_FEATURES,
-                cv_method="TimeSeriesSplit",
-            ),
-        ],
-        append=True,
-    )
+    hyper_rows = []
+    hyper_rows.extend(_hyperparameter_rows(
+        pipeline="daily_temporal",
+        model="AdaBoost (Daily, Temporal Split)",
+        target=DAILY_TARGET,
+        features=DAILY_FEATURES,
+        cv_method="TimeSeriesSplit",
+    ))
+    hyper_rows.extend(_hyperparameter_rows(
+        pipeline="daily_temporal",
+        model="FI-AdaBoost (Daily, Temporal Split)",
+        target=DAILY_TARGET,
+        features=DAILY_FEATURES,
+        cv_method="TimeSeriesSplit",
+    ))
+    p_hyper = save_hyperparameters_csv(hyper_rows, append=True)
 
     # CV fold metrics (Fix 4 — TimeSeriesSplit)
     tscv    = TimeSeriesSplit(n_splits=5)
@@ -881,6 +932,36 @@ def save_metrics_csv(ada_m: dict, fi_m: dict) -> str:
     return path
 
 
+def save_overfitting_analysis_csv(
+    ada_train_m: dict,
+    ada_val_m: dict,
+    fi_train_m: dict,
+    fi_val_m: dict,
+) -> str:
+    rows = []
+    for model, train_m, val_m in [
+        ("AdaBoost (Baseline)", ada_train_m, ada_val_m),
+        ("FI-AdaBoost (Proposed)", fi_train_m, fi_val_m),
+    ]:
+        rows.append({
+            "model": model,
+            "validation_source": "held_out_test_split",
+            "train_RMSE_J": train_m["RMSE_J"],
+            "validation_RMSE_J": val_m["RMSE_J"],
+            "RMSE_gap_validation_minus_train_J": val_m["RMSE_J"] - train_m["RMSE_J"],
+            "train_MAE_J": train_m["MAE_J"],
+            "validation_MAE_J": val_m["MAE_J"],
+            "MAE_gap_validation_minus_train_J": val_m["MAE_J"] - train_m["MAE_J"],
+            "train_R2": train_m["R2"],
+            "validation_R2": val_m["R2"],
+            "R2_gap_train_minus_validation": train_m["R2"] - val_m["R2"],
+        })
+
+    path = os.path.join(RESULTS_DIR, "overfitting_analysis.csv")
+    pd.DataFrame(rows).to_csv(path, index=False, float_format="%.12g")
+    return path
+
+
 def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     merged = ada_fcast.merge(
         fi_fcast[
@@ -904,23 +985,45 @@ def save_forecast_csv(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame) -> str:
     return path
 
 
+def _importance_percentages(values) -> np.ndarray:
+    """Normalize importance values to percentages that sum to 100 for reporting."""
+    arr = np.asarray(values, dtype=float)
+    if arr.size == 0:
+        return arr
+
+    arr = np.where(np.isfinite(arr), np.maximum(arr, 0.0), 0.0)
+    total = float(arr.sum())
+    if total <= 0:
+        pct = np.full(arr.shape, 100.0 / arr.size, dtype=float)
+    else:
+        pct = arr / total * 100.0
+
+    # Force the persisted/displayed percentages to add to exactly 100.0.
+    pct[-1] = 100.0 - float(pct[:-1].sum())
+    return pct
+
+
 def save_feature_importance_csv(uniform_baseline_vals, actual_baseline_vals, fi_vals, feats) -> str:
     """Save exact feature-importance values used by the feature-importance PNGs."""
     rows = []
-    for feat, uniform_val, actual_val, fi_val in zip(
-        feats, uniform_baseline_vals, actual_baseline_vals, fi_vals
+    uniform_pct = _importance_percentages(uniform_baseline_vals)
+    actual_pct = _importance_percentages(actual_baseline_vals)
+    fi_pct = _importance_percentages(fi_vals)
+
+    for feat, uniform_percent, actual_percent, fi_percent in zip(
+        feats, uniform_pct, actual_pct, fi_pct
     ):
         rows.append({
             "feature":                            feat,
             "baseline_source":                    "uniform_no_feature_weighting_reference",
-            "baseline_importance_weight":         float(uniform_val),
-            "baseline_importance_percent":        float(uniform_val) * 100,
+            "baseline_importance_weight":         float(uniform_percent) / 100.0,
+            "baseline_importance_percent":        float(uniform_percent),
             "actual_baseline_source":             "ada_feature_importances_",
-            "actual_baseline_importance_weight":  float(actual_val),
-            "actual_baseline_importance_percent": float(actual_val) * 100,
+            "actual_baseline_importance_weight":  float(actual_percent) / 100.0,
+            "actual_baseline_importance_percent": float(actual_percent),
             "fi_source":                          "fi_adaboost_feature_importances_",
-            "fi_importance_weight":               float(fi_val),
-            "fi_importance_percent":              float(fi_val) * 100,
+            "fi_importance_weight":               float(fi_percent) / 100.0,
+            "fi_importance_percent":              float(fi_percent),
         })
 
     df = pd.DataFrame(rows)
@@ -937,15 +1040,16 @@ def save_feature_importance_csv(uniform_baseline_vals, actual_baseline_vals, fi_
 
 def save_feature_weight_csv(fi_vals, feats) -> str:
     """Save the exact FI-AdaBoost feature weights used as the weighting proof artifact."""
-    order = np.argsort(fi_vals)[::-1]
+    fi_percentages = _importance_percentages(fi_vals)
+    order = np.argsort(fi_percentages)[::-1]
     rows = []
     for rank, idx in enumerate(order, start=1):
-        weight = float(fi_vals[idx])
+        percent = float(fi_percentages[idx])
         rows.append({
             "rank": rank,
             "feature": str(feats[idx]),
-            "fi_feature_weight": weight,
-            "fi_feature_weight_percent": weight * 100,
+            "fi_feature_weight": percent / 100.0,
+            "fi_feature_weight_percent": percent,
             "source": "fi_adaboost_feature_importances_",
         })
 
@@ -956,15 +1060,16 @@ def save_feature_weight_csv(fi_vals, feats) -> str:
 
 def save_baseline_feature_weight_csv(ada_vals, feats) -> str:
     """Save actual fitted baseline AdaBoost feature weights as a comparable proof artifact."""
-    order = np.argsort(ada_vals)[::-1]
+    ada_percentages = _importance_percentages(ada_vals)
+    order = np.argsort(ada_percentages)[::-1]
     rows = []
     for rank, idx in enumerate(order, start=1):
-        weight = float(ada_vals[idx])
+        percent = float(ada_percentages[idx])
         rows.append({
             "rank": rank,
             "feature": str(feats[idx]),
-            "baseline_feature_weight": weight,
-            "baseline_feature_weight_percent": weight * 100,
+            "baseline_feature_weight": percent / 100.0,
+            "baseline_feature_weight_percent": percent,
             "source": "ada_feature_importances_",
         })
 
@@ -976,127 +1081,87 @@ def save_baseline_feature_weight_csv(ada_vals, feats) -> str:
 # =============================================================================
 # PLOTS
 # =============================================================================
-def plot_standalone_feature_importance(fi_vals, feats):
-    plt.figure(figsize=(10, 6))
-    labels     = [f.replace("_", " ").title() for f in feats]
-    idx        = np.argsort(fi_vals)     # sort ascending so the longest bar is at the top
-    sv         = fi_vals[idx]
-    sl         = np.array(labels)[idx]
-    bars       = plt.barh(sl, sv, color=C_FI, edgecolor="black", alpha=0.85)
+def _plot_importance_percent_bar(values, feats, title: str, xlabel: str, color: str, filename: str) -> None:
+    fig, ax = plt.subplots(figsize=(10, 6))
+    labels = [f.replace("_", " ").title() for f in feats]
+    percentages = _importance_percentages(values)
+    idx = np.argsort(percentages)
+    sv = percentages[idx]
+    sl = np.array(labels)[idx]
+    bars = ax.barh(sl, sv, color=color, edgecolor="black", alpha=0.88)
     for bar, val in zip(bars, sv):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("FI-AdaBoost Feature Importance", fontsize=14, fontweight="bold")
-    plt.xlabel("Relative Importance Weight", fontsize=12)
-    plt.xlim(0, max(sv) + 0.1)
-    plt.gca().spines["top"].set_visible(False)
-    plt.gca().spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "standalone_feature_importances.png"), dpi=300)
-    plt.close()
+        ax.text(
+            val + 0.5,
+            bar.get_y() + bar.get_height() / 2,
+            f"{val:.4f}%",
+            va="center",
+            ha="left",
+            fontsize=10,
+            fontweight="bold",
+        )
+    ax.set_title(title, fontsize=14, fontweight="bold")
+    ax.set_xlabel(xlabel, fontsize=12)
+    ax.set_xlim(0, max(float(sv.max()) * 1.18, 1.0))
+    ax.spines["top"].set_visible(False)
+    ax.spines["right"].set_visible(False)
+    fig.tight_layout()
+    fig.savefig(os.path.join(RESULTS_DIR, filename), dpi=300)
+    plt.close(fig)
+
+
+def plot_standalone_feature_importance(fi_vals, feats):
+    _plot_importance_percent_bar(
+        fi_vals,
+        feats,
+        "FI-AdaBoost Feature Importance",
+        "Feature Importance (%)",
+        C_FI,
+        "standalone_feature_importances.png",
+    )
 
 
 def plot_feature_weight_importance(fi_vals, feats):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    labels = [f.replace("_", " ").title() for f in feats]
-    idx = np.argsort(fi_vals)
-    sv = fi_vals[idx]
-    sl = np.array(labels)[idx]
-    bars = ax.barh(sl, sv, color=C_FI, edgecolor="black", alpha=0.88)
-    for bar, val in zip(bars, sv):
-        ax.text(
-            val + 0.005,
-            bar.get_y() + bar.get_height() / 2,
-            f"{val * 100:.4f}%",
-            va="center",
-            ha="left",
-            fontsize=10,
-            fontweight="bold",
-        )
-    ax.set_title(
+    _plot_importance_percent_bar(
+        fi_vals,
+        feats,
         "FI-AdaBoost Feature Weight Importance\nProof of Feature-Aware Weighting",
-        fontsize=14,
-        fontweight="bold",
+        "Feature Weight Used by FI-AdaBoost (%)",
+        C_FI,
+        "feature_weight_importance.png",
     )
-    ax.set_xlabel("Feature Weight Used by FI-AdaBoost", fontsize=12)
-    ax.set_xlim(0, max(sv) + 0.1)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, "feature_weight_importance.png"), dpi=300)
-    plt.close(fig)
 
 
 def plot_baseline_feature_weight_importance(ada_vals, feats):
-    fig, ax = plt.subplots(figsize=(10, 6))
-    labels = [f.replace("_", " ").title() for f in feats]
-    idx = np.argsort(ada_vals)
-    sv = ada_vals[idx]
-    sl = np.array(labels)[idx]
-    bars = ax.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.88)
-    for bar, val in zip(bars, sv):
-        ax.text(
-            val + 0.005,
-            bar.get_y() + bar.get_height() / 2,
-            f"{val * 100:.4f}%",
-            va="center",
-            ha="left",
-            fontsize=10,
-            fontweight="bold",
-        )
-    ax.set_title(
+    _plot_importance_percent_bar(
+        ada_vals,
+        feats,
         "Baseline AdaBoost Feature Weight Importance\nActual Fitted AdaBoost Feature Importances",
-        fontsize=14,
-        fontweight="bold",
+        "Feature Weight from Fitted AdaBoost (%)",
+        C_ADA,
+        "baseline_feature_weight_importance.png",
     )
-    ax.set_xlabel("Feature Weight from Fitted AdaBoost", fontsize=12)
-    ax.set_xlim(0, max(sv) + 0.1)
-    ax.spines["top"].set_visible(False)
-    ax.spines["right"].set_visible(False)
-    fig.tight_layout()
-    fig.savefig(os.path.join(RESULTS_DIR, "baseline_feature_weight_importance.png"), dpi=300)
-    plt.close(fig)
 
 
 def plot_standalone_baseline_feature_importance(ada_vals, feats):
-    plt.figure(figsize=(10, 6))
-    labels     = [f.replace("_", " ").title() for f in feats]
-    idx        = np.argsort(ada_vals)    # sort ascending so the longest bar is at the top
-    sv         = ada_vals[idx]
-    sl         = np.array(labels)[idx]
-    bars       = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
-    for bar, val in zip(bars, sv):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("Baseline AdaBoost Feature Importance\n(No Feature Weighting — Uniform)", fontsize=14, fontweight="bold")
-    plt.xlabel("Relative Importance Weight", fontsize=12)
-    plt.xlim(0, max(sv) + 0.1)
-    plt.gca().spines["top"].set_visible(False)
-    plt.gca().spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "baseline_feature_importances.png"), dpi=300)
-    plt.close()
+    _plot_importance_percent_bar(
+        ada_vals,
+        feats,
+        "Baseline AdaBoost Feature Importance\n(No Feature Weighting — Uniform)",
+        "Feature Importance (%)",
+        C_ADA,
+        "baseline_feature_importances.png",
+    )
 
 
 def plot_actual_baseline_feature_importance(ada_vals, feats):
-    plt.figure(figsize=(10, 6))
-    labels     = [f.replace("_", " ").title() for f in feats]
-    idx        = np.argsort(ada_vals)    # sort ascending so the longest bar is at the top
-    sv         = ada_vals[idx]
-    sl         = np.array(labels)[idx]
-    bars       = plt.barh(sl, sv, color=C_ADA, edgecolor="black", alpha=0.85)
-    for bar, val in zip(bars, sv):
-        plt.text(val + 0.005, bar.get_y() + bar.get_height() / 2,
-                 f"{val * 100:.4f}%", va="center", ha="left", fontsize=10, fontweight="bold")
-    plt.title("Actual Baseline AdaBoost Feature Importance\nGini-Based from Fitted AdaBoost Ensemble",
-              fontsize=14, fontweight="bold")
-    plt.xlabel("Relative Importance Weight", fontsize=12)
-    plt.xlim(0, max(sv) + 0.1)
-    plt.gca().spines["top"].set_visible(False)
-    plt.gca().spines["right"].set_visible(False)
-    plt.tight_layout()
-    plt.savefig(os.path.join(RESULTS_DIR, "actual_baseline_feature_importances.png"), dpi=300)
-    plt.close()
+    _plot_importance_percent_bar(
+        ada_vals,
+        feats,
+        "Actual Baseline AdaBoost Feature Importance\nGini-Based from Fitted AdaBoost Ensemble",
+        "Feature Importance (%)",
+        C_ADA,
+        "actual_baseline_feature_importances.png",
+    )
 
 
 def plot_actual_vs_predicted(y_true_ada, y_pred_ada, y_true_fi, y_pred_fi):
@@ -1211,23 +1276,45 @@ def plot_total_energy_comparison(ada_fcast: pd.DataFrame, fi_fcast: pd.DataFrame
     plt.close()
 
 
-def plot_overfit_check(ada_train_m, ada_test_m, fi_train_m, fi_test_m):
-    labels     = ["Baseline AdaBoost", "FI-AdaBoost Proposed"]
-    train_rmse = [ada_train_m["RMSE_J"], fi_train_m["RMSE_J"]]
-    test_rmse  = [ada_test_m["RMSE_J"],  fi_test_m["RMSE_J"]]
-
-    x     = np.arange(len(labels))
-    width = 0.35  # bar width; two bars per model side by side
+def plot_overfit_check(ada_train_m, ada_val_m, fi_train_m, fi_val_m):
+    stages = ["Training", "Validation"]
+    x = np.arange(len(stages))
+    series = [
+        ("AdaBoost (Baseline)", [ada_train_m["RMSE_J"], ada_val_m["RMSE_J"]], C_ADA),
+        ("FI-AdaBoost (Proposed)", [fi_train_m["RMSE_J"], fi_val_m["RMSE_J"]], C_FI),
+    ]
 
     fig, ax = plt.subplots(figsize=(8, 6))
-    rects1 = ax.bar(x - width / 2, train_rmse, width, label="Train RMSE", color=C_ADA, edgecolor="black", alpha=0.85)
-    rects2 = ax.bar(x + width / 2, test_rmse,  width, label="Test RMSE",  color=C_FI,  edgecolor="black", alpha=0.85)
+    max_rmse = max(max(values) for _, values, _ in series)
+    for label, values, color in series:
+        ax.plot(
+            x,
+            values,
+            marker="o",
+            linewidth=2.5,
+            markersize=8,
+            label=label,
+            color=color,
+        )
+        for xi, value in zip(x, values):
+            ax.annotate(
+                f"{value:,.2f}",
+                (xi, value),
+                textcoords="offset points",
+                xytext=(0, 10),
+                ha="center",
+                fontsize=9,
+                fontweight="bold",
+                color=color,
+            )
 
     ax.set_ylabel("RMSE (J/m²/day)", fontsize=12)
-    ax.set_title("Overfitting Check: Train vs Test Error\n(A massive gap indicates overfitting)",
+    ax.set_title("Overfitting Check: Training vs Validation RMSE\n(Held-out split used as validation)",
                  fontsize=13, fontweight="bold")
     ax.set_xticks(x)
-    ax.set_xticklabels(labels, fontsize=11)
+    ax.set_xticklabels(stages, fontsize=11)
+    ax.set_ylim(0, max_rmse * 1.2)
+    ax.grid(axis="y", linestyle="--", alpha=0.3)
     ax.legend()
     ax.spines["top"].set_visible(False)
     ax.spines["right"].set_visible(False)
@@ -1292,27 +1379,22 @@ def main():
     fi_params = _tune_kfold(FIAdaBoostRegressor, _fi_space, X_tr_fi, y_tr)
     print(f"  Best FI-AdaBoost params: {fi_params}")
 
-    p_hyper = save_hyperparameters_csv(
-        [
-            _hyperparameter_row(
-                pipeline="spatial_rooftop",
-                model="AdaBoost (Baseline)",
-                params=ada_params,
-                target=TARGET_COL,
-                features=BASELINE_FEATURES,
-                cv_method="KFold",
-            ),
-            _hyperparameter_row(
-                pipeline="spatial_rooftop",
-                model="FI-AdaBoost (Proposed)",
-                params=fi_params,
-                target=TARGET_COL,
-                features=FI_FEATURES,
-                cv_method="KFold",
-            ),
-        ],
-        append=False,
-    )
+    hyper_rows = []
+    hyper_rows.extend(_hyperparameter_rows(
+        pipeline="spatial_rooftop",
+        model="AdaBoost (Baseline)",
+        target=TARGET_COL,
+        features=BASELINE_FEATURES,
+        cv_method="KFold",
+    ))
+    hyper_rows.extend(_hyperparameter_rows(
+        pipeline="spatial_rooftop",
+        model="FI-AdaBoost (Proposed)",
+        target=TARGET_COL,
+        features=FI_FEATURES,
+        cv_method="KFold",
+    ))
+    p_hyper = save_hyperparameters_csv(hyper_rows, append=False)
     print(f"  Saved tuned hyperparameters: {p_hyper}")
 
     # ── [4] KFold CV metrics (Fix 4) ───────────────────────────────────────────
@@ -1351,11 +1433,11 @@ def main():
 
     # Print the Overfit Check
     print("\n  OVERFITTING CHECK (Train vs Test RMSE):")
-    print(f"    AdaBoost   : Train RMSE={ada_train_m['RMSE_J']:>12,.0f} | Test RMSE={ada_test_m['RMSE_J']:>12,.0f}")
-    print(f"    FI-AdaBoost: Train RMSE={fi_train_m['RMSE_J']:>12,.0f} | Test RMSE={fi_test_m['RMSE_J']:>12,.0f}")
-    # Warn if train error is less than half the test error — suggests the model memorized training data
+    print(f"    AdaBoost   : Train RMSE={ada_train_m['RMSE_J']:>12,.0f} | Validation RMSE={ada_test_m['RMSE_J']:>12,.0f}")
+    print(f"    FI-AdaBoost: Train RMSE={fi_train_m['RMSE_J']:>12,.0f} | Validation RMSE={fi_test_m['RMSE_J']:>12,.0f}")
+    # Warn if train error is less than half the validation error — suggests the model memorized training data
     if fi_train_m["RMSE_J"] < (fi_test_m["RMSE_J"] * 0.5):
-        print("    WARNING: FI-AdaBoost Train error is less than half the Test error. Significant overfitting likely.")
+        print("    WARNING: FI-AdaBoost Train error is less than half the validation error. Significant overfitting likely.")
 
     # Diebold–Mariano test (Fix 5)
     dm = diebold_mariano_test(y_te - ada_te, y_te - fi_te)
@@ -1392,6 +1474,7 @@ def main():
 
     # Save all spatial results
     p_metrics  = save_metrics_csv(ada_test_m, fi_test_m)
+    p_overfit  = save_overfitting_analysis_csv(ada_train_m, ada_test_m, fi_train_m, fi_test_m)
     p_forecast = save_forecast_csv(ada_fcast, fi_fcast)
     p_dm       = save_dm_results(dm, suffix="spatial")
 
@@ -1417,6 +1500,7 @@ def main():
         ("CSV",   os.path.join(RESULTS_DIR, "train_test_split_info.csv")),
         ("CSV",   p_hyper),
         ("CSV",   p_metrics),
+        ("CSV",   p_overfit),
         ("CSV",   p_forecast),
         ("CSV",   p_dm),
         ("CSV",   p_feature_importance),
